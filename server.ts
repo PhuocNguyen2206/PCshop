@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
 const DB_CONFIG = {
   host: process.env.DB_HOST || "localhost",
   user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "0795662034",
+  password: process.env.DB_PASSWORD || "",
   database: process.env.DB_NAME || "pcmaster",
   waitForConnections: true,
   connectionLimit: 10,
