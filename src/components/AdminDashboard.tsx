@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { LayoutDashboard, Package, ShoppingBag, User as UserIcon, Plus, Edit2, Trash2, X, ChevronDown, DollarSign, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, Category, Order, User } from '../types';
+import { useAuth } from '../AuthContext';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
@@ -61,25 +62,27 @@ export const AdminDashboard = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'users'>('overview');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const { authHeaders } = useAuth();
 
   useEffect(() => {
-    fetch('/api/admin/stats').then(res => res.json()).then(setStats);
-    fetch('/api/admin/orders').then(res => res.json()).then(setOrders);
+    const headers = authHeaders();
+    fetch('/api/admin/stats', { headers }).then(res => res.json()).then(setStats);
+    fetch('/api/admin/orders', { headers }).then(res => res.json()).then(setOrders);
     fetch('/api/products').then(res => res.json()).then(setProducts);
     fetch('/api/categories').then(res => res.json()).then(setCategories);
-    fetch('/api/admin/users').then(res => res.json()).then(setUsers);
+    fetch('/api/admin/users', { headers }).then(res => res.json()).then(setUsers);
   }, []);
 
   const handleDeleteProduct = async (id: number) => {
     if (confirm("Bạn có chắc chắn muốn xóa sản phẩm này?")) {
-      await fetch(`/api/admin/products/${id}`, { method: 'DELETE' });
+      await fetch(`/api/admin/products/${id}`, { method: 'DELETE', headers: authHeaders() });
       setProducts(prev => prev.filter(p => p.id !== id));
     }
   };
 
   const handleDeleteUser = async (id: number) => {
     if (confirm("Bạn có chắc chắn muốn xóa người dùng này?")) {
-      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE', headers: authHeaders() });
       if (res.ok) {
         setUsers(prev => prev.filter(u => u.id !== id));
       } else {
@@ -100,7 +103,7 @@ export const AdminDashboard = () => {
     try {
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(editingProduct)
       });
       if (res.ok) {
@@ -123,7 +126,7 @@ export const AdminDashboard = () => {
     try {
       const res = await fetch(`/api/admin/orders/${orderId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ status: newStatus })
       });
       if (res.ok) {

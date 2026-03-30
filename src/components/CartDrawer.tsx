@@ -6,7 +6,7 @@ import { useAuth } from '../AuthContext';
 
 export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) => {
   const { items, total, removeFromCart, updateQuantity, clearCart } = useCart();
-  const { user } = useAuth();
+  const { user, authHeaders } = useAuth();
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
   const [customerInfo, setCustomerInfo] = useState({ name: user?.name || '', email: user?.email || '' });
@@ -29,7 +29,7 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
     try {
       const res = await fetch('/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           user_id: user?.id,
           customer_name: customerInfo.name,

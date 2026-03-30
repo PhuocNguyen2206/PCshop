@@ -4,6 +4,8 @@ import mysql from "mysql2/promise";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 
 dotenv.config({ path: ".env.local" });
 
@@ -16,6 +18,8 @@ const __dirname = path.dirname(__filename);
 //   DB_USER=root
 //   DB_PASSWORD=matkhau
 //   DB_NAME=pcmaster
+const JWT_SECRET = process.env.JWT_SECRET || "pcmaster_secret_key_change_in_production";
+
 const DB_CONFIG = {
   host: process.env.DB_HOST || "localhost",
   user: process.env.DB_USER || "root",
@@ -118,18 +122,20 @@ async function initDatabase() {
 
   const [userRows] = await pool.execute("SELECT COUNT(*) as count FROM users") as any;
   if (userRows[0].count === 0) {
-    // DEMO MODE: Lưu plain text password tạm thời (không dùng bcrypt)
-    const adminPassword = "admin123";
+    const hashedPassword = await bcrypt.hash("admin123", 10);
     await pool.execute(
       "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-      ["Admin", "admin@pcmaster.vn", adminPassword, "admin"]
+      ["Admin", "admin@pcmaster.vn", hashedPassword, "admin"]
     );
   } else {
-    // Cập nhật user admin nếu đã tồn tại (cho DEMO MODE)
-    await pool.execute(
-      "UPDATE users SET password = ? WHERE email = ?",
-      ["admin123", "admin@pcmaster.vn"]
-    );
+    // Migrate plain-text passwords to bcrypt (for existing databases)
+    const [users] = await pool.execute("SELECT id, password FROM users") as any;
+    for (const u of users) {
+      if (!u.password.startsWith("$2a$") && !u.password.startsWith("$2b$")) {
+        const hashed = await bcrypt.hash(u.password, 10);
+        await pool.execute("UPDATE users SET password = ? WHERE id = ?", [hashed, u.id]);
+      }
+    }
   }
 
   console.log("Kết nối MySQL thành công & khởi tạo database xong!");
@@ -144,16 +150,39 @@ async function startServer() {
 
   app.use(express.json());
 
+  // JWT Middleware
+  const authenticateToken = (req: any, res: any, next: any) => {
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Chưa đăng nhập" });
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.user = decoded;
+      next();
+    } catch {
+      return res.status(403).json({ error: "Token không hợp lệ hoặc hết hạn" });
+    }
+  };
+
+  const requireAdmin = (req: any, res: any, next: any) => {
+    if (req.user?.role !== "admin") {
+      return res.status(403).json({ error: "Không có quyền truy cập" });
+    }
+    next();
+  };
+
   // Auth Routes
   app.post("/api/auth/register", async (req, res) => {
     const { name, email, password } = req.body;
     try {
-      // DEMO MODE: Lưu plain text password tạm thời (không dùng bcrypt)
+      const hashedPassword = await bcrypt.hash(password, 10);
       const [result] = await db.execute(
         "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-        [name, email, password]
+        [name, email, hashedPassword]
       ) as any;
-      res.status(201).json({ id: result.insertId, name, email, role: "user" });
+      const user = { id: result.insertId, name, email, role: "user" };
+      const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
+      res.status(201).json({ ...user, token });
     } catch (error) {
       res.status(400).json({ error: "Email đã tồn tại" });
     }
@@ -163,10 +192,10 @@ async function startServer() {
     const { email, password } = req.body;
     const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email]) as any;
     const user = rows[0];
-    // DEMO MODE: So sánh plain text (khi chuyển production, dùng bcrypt.compare)
-    if (user && password === user.password) {
+    if (user && await bcrypt.compare(password, user.password)) {
       const { password: _, ...userWithoutPassword } = user;
-      res.json(userWithoutPassword);
+      const token = jwt.sign(userWithoutPassword, JWT_SECRET, { expiresIn: "7d" });
+      res.json({ ...userWithoutPassword, token });
     } else {
       res.status(401).json({ error: "Sai email hoặc mật khẩu" });
     }
@@ -208,7 +237,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/orders", async (req, res) => {
+  app.post("/api/orders", authenticateToken, async (req, res) => {
     const { user_id, customer_name, customer_email, items, total_amount } = req.body;
     const conn = await db.getConnection();
     try {
@@ -242,8 +271,8 @@ async function startServer() {
     }
   });
 
-  // Admin API
-  app.get("/api/admin/stats", async (req, res) => {
+  // Admin API (protected)
+  app.get("/api/admin/stats", authenticateToken, requireAdmin, async (req, res) => {
     const [orderRows] = await db.execute("SELECT COUNT(*) as count FROM orders") as any;
     const [revenueRows] = await db.execute("SELECT SUM(total_amount) as total FROM orders") as any;
     const [productRows] = await db.execute("SELECT COUNT(*) as count FROM products") as any;
@@ -255,12 +284,12 @@ async function startServer() {
     });
   });
 
-  app.get("/api/admin/orders", async (req, res) => {
+  app.get("/api/admin/orders", authenticateToken, requireAdmin, async (req, res) => {
     const [orders] = await db.execute("SELECT * FROM orders ORDER BY created_at DESC");
     res.json(orders);
   });
 
-  app.put("/api/admin/orders/:id", async (req, res) => {
+  app.put("/api/admin/orders/:id", authenticateToken, requireAdmin, async (req, res) => {
     const { status } = req.body;
     const validStatuses = ["pending", "processing", "shipped", "delivered", "cancelled"];
     if (!validStatuses.includes(status)) {
@@ -277,7 +306,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/admin/products", async (req, res) => {
+  app.post("/api/admin/products", authenticateToken, requireAdmin, async (req, res) => {
     const { name, slug, description, price, stock, image_url, category_id } = req.body;
     try {
       const [result] = await db.execute(
@@ -290,12 +319,12 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/admin/products/:id", async (req, res) => {
+  app.delete("/api/admin/products/:id", authenticateToken, requireAdmin, async (req, res) => {
     await db.execute("DELETE FROM products WHERE id = ?", [req.params.id]);
     res.json({ message: "Đã xóa sản phẩm" });
   });
 
-  app.put("/api/admin/products/:id", async (req, res) => {
+  app.put("/api/admin/products/:id", authenticateToken, requireAdmin, async (req, res) => {
     const { name, slug, description, price, stock, image_url, category_id } = req.body;
     try {
       await db.execute(
@@ -310,12 +339,12 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/users", async (req, res) => {
+  app.get("/api/admin/users", authenticateToken, requireAdmin, async (req, res) => {
     const [users] = await db.execute("SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC");
     res.json(users);
   });
 
-  app.delete("/api/admin/users/:id", async (req, res) => {
+  app.delete("/api/admin/users/:id", authenticateToken, requireAdmin, async (req, res) => {
     const [rows] = await db.execute("SELECT role FROM users WHERE id = ?", [req.params.id]) as any;
     if (rows[0] && rows[0].role === "admin") {
       return res.status(403).json({ error: "Không thể xóa tài khoản admin" });
