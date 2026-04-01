@@ -1,27 +1,39 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Package, Sparkles, ShoppingCart } from 'lucide-react';
+import { Plus, Package, Sparkles, ShoppingCart, Zap, Shield, Truck, Monitor, Cpu, HardDrive, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../CartContext';
+import { useAuth } from '../AuthContext';
 import { Product, Category } from '../types';
 
-export const UserStore = ({ onProductClick }: { onProductClick: (slug: string) => void }) => {
+export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slug: string) => void, onAuthOpen: () => void }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [addedId, setAddedId] = useState<number | null>(null);
   const { addToCart } = useCart();
+  const { isAuthenticated } = useAuth();
 
   useEffect(() => {
-    fetch('/api/categories').then(res => res.json()).then(setCategories);
+    fetch('/api/categories')
+      .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+      .then(setCategories)
+      .catch(() => setCategories([]));
   }, []);
 
   useEffect(() => {
     const url = selectedCategory ? `/api/products?category=${selectedCategory}` : '/api/products';
-    fetch(url).then(res => res.json()).then(setProducts);
+    fetch(url)
+      .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+      .then(setProducts)
+      .catch(() => setProducts([]));
   }, [selectedCategory]);
 
   const handleAddToCart = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();
+    if (!isAuthenticated) {
+      onAuthOpen();
+      return;
+    }
     addToCart(product);
     setAddedId(product.id);
     setTimeout(() => setAddedId(null), 800);
@@ -29,47 +41,127 @@ export const UserStore = ({ onProductClick }: { onProductClick: (slug: string) =
 
   return (
     <div>
-      {/* Hero Section */}
-      <div className="hero-gradient relative overflow-hidden">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-20 text-center relative z-10">
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 border border-indigo-100 rounded-full text-xs font-semibold text-indigo-600 mb-6">
-              <Sparkles className="w-3.5 h-3.5" />
-              Linh kiện chính hãng - Bảo hành toàn quốc
-            </div>
-            <h2 className="text-4xl md:text-5xl lg:text-6xl font-black tracking-tight text-zinc-900 mb-4">
-              NÂNG CẤP{' '}
-              <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 bg-clip-text text-transparent">
-                TRẢI NGHIỆM
-              </span>
-              {' '}PC
-            </h2>
-            <p className="text-zinc-500 max-w-2xl mx-auto text-base md:text-lg">
-              Cung cấp linh kiện máy tính chính hãng, hiệu năng cao cho game thủ và chuyên gia đồ họa.
-            </p>
-          </motion.div>
+      {/* ── Hero Section ─────────────────────────────────── */}
+      <div className="hero-dark noise">
+        {/* Grid overlay */}
+        <div className="absolute inset-0 grid-pattern" />
+        
+        {/* Animated orbs */}
+        <div className="absolute top-20 left-[10%] w-72 h-72 bg-indigo-500/20 rounded-full blur-[100px] animate-orb-1" />
+        <div className="absolute bottom-10 right-[15%] w-96 h-96 bg-violet-500/15 rounded-full blur-[120px] animate-orb-2" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[100px] animate-float-slow" />
 
-          {/* Decorative blobs */}
-          <div className="absolute top-10 left-10 w-32 h-32 bg-indigo-200/20 rounded-full blur-3xl animate-float" />
-          <div className="absolute bottom-10 right-10 w-40 h-40 bg-violet-200/20 rounded-full blur-3xl animate-float" style={{ animationDelay: '2s' }} />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-28 relative z-10">
+          <div className="text-center max-w-4xl mx-auto">
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {/* Badge */}
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.1 }}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-full text-xs font-semibold text-indigo-300 mb-8 backdrop-blur-sm"
+              >
+                <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                Linh kiện chính hãng — Bảo hành toàn quốc
+              </motion.div>
+
+              {/* Heading */}
+              <h1 className="text-5xl md:text-6xl lg:text-7xl font-black tracking-tight text-white mb-6 leading-[1.1]">
+                Nâng cấp{' '}
+                <span className="animated-gradient-text">
+                  trải nghiệm
+                </span>
+                <br />
+                PC của bạn
+              </h1>
+
+              <p className="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+                Cung cấp linh kiện máy tính chính hãng, hiệu năng cao cho game thủ và chuyên gia đồ họa.
+              </p>
+
+              {/* CTA Buttons */}
+              <div className="flex flex-wrap items-center justify-center gap-4 mb-16">
+                <motion.button
+                  whileHover={{ scale: 1.03, y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => document.getElementById('products')?.scrollIntoView({ behavior: 'smooth' })}
+                  className="px-8 py-3.5 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 rounded-2xl shadow-xl shadow-indigo-500/25 hover:shadow-2xl hover:shadow-indigo-500/30 transition-all duration-300 flex items-center gap-2"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Khám phá ngay
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.03, y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  className="px-8 py-3.5 text-sm font-bold text-slate-300 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all duration-300 backdrop-blur-sm"
+                >
+                  Xem khuyến mãi
+                </motion.button>
+              </div>
+            </motion.div>
+
+            {/* Stats bar */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.6 }}
+              className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6"
+            >
+              {[
+                { icon: Zap, label: 'Hiệu năng cao', value: 'Top-tier' },
+                { icon: Shield, label: 'Bảo hành', value: '36 tháng' },
+                { icon: Truck, label: 'Vận chuyển', value: 'Miễn phí' },
+                { icon: Star, label: 'Đánh giá', value: '4.9/5.0' },
+              ].map((stat, i) => (
+                <motion.div
+                  key={stat.label}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 + i * 0.08 }}
+                  className="flex flex-col items-center gap-2 p-4 bg-white/[0.03] border border-white/[0.06] rounded-2xl backdrop-blur-sm"
+                >
+                  <stat.icon className="w-5 h-5 text-indigo-400" />
+                  <span className="text-sm font-bold text-white">{stat.value}</span>
+                  <span className="text-[11px] text-slate-500">{stat.label}</span>
+                </motion.div>
+              ))}
+            </motion.div>
+          </div>
         </div>
+
+        {/* Bottom gradient fade to white */}
+        <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-white to-transparent" />
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      {/* ── Products Section ─────────────────────────────── */}
+      <div id="products" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+        {/* Section header */}
+        <motion.div
+          initial={{ opacity: 0, y: 15 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="text-center mb-12"
+        >
+          <h2 className="text-3xl md:text-4xl font-black text-slate-900 mb-3">
+            Sản phẩm <span className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">nổi bật</span>
+          </h2>
+          <p className="text-slate-500 max-w-lg mx-auto">Lựa chọn từ các thương hiệu uy tín hàng đầu thế giới</p>
+        </motion.div>
+
         {/* Categories */}
         <motion.div 
           initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="flex flex-wrap justify-center gap-2 mb-10"
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="flex flex-wrap justify-center gap-2 mb-12"
         >
           <button 
             onClick={() => setSelectedCategory(null)}
-            className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-all duration-300 ${!selectedCategory ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-200' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:shadow-md'}`}
+            className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-all duration-300 ${!selectedCategory ? 'bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:shadow-md'}`}
           >
             Tất cả
           </button>
@@ -77,7 +169,7 @@ export const UserStore = ({ onProductClick }: { onProductClick: (slug: string) =
             <button 
               key={cat.id}
               onClick={() => setSelectedCategory(cat.slug)}
-              className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-all duration-300 ${selectedCategory === cat.slug ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-200' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:shadow-md'}`}
+              className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-all duration-300 ${selectedCategory === cat.slug ? 'bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:shadow-md'}`}
             >
               {cat.name}
             </button>
@@ -93,9 +185,9 @@ export const UserStore = ({ onProductClick }: { onProductClick: (slug: string) =
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="flex flex-col items-center justify-center py-24 text-zinc-400"
+                className="flex flex-col items-center justify-center py-24 text-slate-400"
               >
-                <div className="w-24 h-24 bg-zinc-50 rounded-3xl flex items-center justify-center mb-4 border border-zinc-100">
+                <div className="w-24 h-24 bg-slate-50 rounded-3xl flex items-center justify-center mb-4 border border-slate-100">
                   <Package className="w-10 h-10 opacity-30" />
                 </div>
                 <p className="text-sm font-medium">Không có sản phẩm trong danh mục này</p>
@@ -112,49 +204,74 @@ export const UserStore = ({ onProductClick }: { onProductClick: (slug: string) =
                 {products.map((product, idx) => (
                   <motion.div 
                     key={product.id}
-                    initial={{ opacity: 0, y: 25 }}
+                    initial={{ opacity: 0, y: 30 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.06, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                    whileHover={{ y: -6, transition: { duration: 0.2 } }}
-                    className="group bg-white border border-zinc-100 rounded-2xl overflow-hidden hover:shadow-2xl hover:shadow-indigo-100/50 hover:border-indigo-100 transition-all duration-300 cursor-pointer"
+                    transition={{ delay: idx * 0.06, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                    className="product-card group bg-white border border-slate-100 rounded-2xl overflow-hidden cursor-pointer"
                     onClick={() => onProductClick(product.slug)}
                   >
-                    <div className="aspect-square overflow-hidden bg-gradient-to-br from-zinc-50 to-zinc-100 relative">
+                    {/* Image */}
+                    <div className="aspect-square overflow-hidden bg-gradient-to-br from-slate-50 to-slate-100 relative">
                       <img 
                         src={product.image_url} 
                         alt={product.name} 
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
                         referrerPolicy="no-referrer"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                      {/* Hover overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                      
+                      {/* Category badge */}
                       <div className="absolute top-3 left-3">
-                        <span className="bg-white/95 backdrop-blur-sm px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider text-zinc-600 shadow-sm">
+                        <span className="bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider text-slate-600 shadow-sm border border-white/50">
                           {product.category_name}
                         </span>
                       </div>
+                      
+                      {/* Stock warning */}
                       {product.stock <= 3 && product.stock > 0 && (
                         <div className="absolute top-3 right-3">
-                          <span className="bg-amber-500 text-white px-2 py-0.5 rounded-md text-[10px] font-bold">
+                          <span className="bg-amber-500/90 backdrop-blur-sm text-white px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-sm">
                             Còn {product.stock}
                           </span>
                         </div>
                       )}
+
+                      {/* Quick add on hover */}
+                      <motion.button 
+                        initial={{ opacity: 0, y: 10 }}
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.9 }}
+                        onClick={(e) => handleAddToCart(e, product)}
+                        className="absolute bottom-3 right-3 p-3 bg-white/90 backdrop-blur-sm rounded-xl shadow-lg opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 text-indigo-600 hover:bg-indigo-600 hover:text-white border border-white/50"
+                      >
+                        {addedId === product.id ? (
+                          <ShoppingCart className="w-4 h-4" />
+                        ) : (
+                          <Plus className="w-4 h-4" />
+                        )}
+                      </motion.button>
                     </div>
+
+                    {/* Info */}
                     <div className="p-5">
-                      <h3 className="font-semibold text-zinc-900 mb-1.5 line-clamp-1 group-hover:text-indigo-700 transition-colors">{product.name}</h3>
-                      <p className="text-sm text-zinc-400 mb-4 line-clamp-2 min-h-[40px] leading-relaxed">{product.description}</p>
+                      <h3 className="font-semibold text-slate-900 mb-1.5 line-clamp-1 group-hover:text-indigo-600 transition-colors duration-300">{product.name}</h3>
+                      <p className="text-sm text-slate-400 mb-4 line-clamp-2 min-h-[40px] leading-relaxed">{product.description}</p>
                       <div className="flex items-center justify-between">
-                        <span className="text-lg font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
-                          {product.price.toLocaleString('vi-VN')}đ
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="text-lg font-extrabold text-slate-900">
+                            {product.price.toLocaleString('vi-VN')}
+                            <span className="text-sm font-bold text-slate-400 ml-0.5">₫</span>
+                          </span>
+                        </div>
                         <motion.button 
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.85 }}
                           onClick={(e) => handleAddToCart(e, product)}
-                          className={`p-2.5 rounded-xl transition-all duration-300 shadow-md ${
+                          className={`p-2.5 rounded-xl transition-all duration-300 ${
                             addedId === product.id 
-                              ? 'bg-emerald-500 text-white shadow-emerald-200' 
-                              : 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white hover:shadow-lg hover:shadow-indigo-200'
+                              ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25' 
+                              : 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/30'
                           }`}
                         >
                           {addedId === product.id ? (
@@ -170,6 +287,36 @@ export const UserStore = ({ onProductClick }: { onProductClick: (slug: string) =
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
+      </div>
+
+      {/* ── Features Banner ──────────────────────────────── */}
+      <div className="bg-gradient-to-r from-slate-50 to-slate-100/50 border-y border-slate-100">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              { icon: Shield, title: 'Bảo hành chính hãng', desc: 'Bảo hành lên đến 36 tháng cho mọi sản phẩm', color: 'indigo' },
+              { icon: Truck, title: 'Giao hàng nhanh chóng', desc: 'Ship COD toàn quốc, miễn phí với đơn trên 500K', color: 'violet' },
+              { icon: Zap, title: 'Tư vấn build PC', desc: 'Đội ngũ kỹ thuật tư vấn cấu hình phù hợp nhất', color: 'purple' },
+            ].map((feature, i) => (
+              <motion.div
+                key={feature.title}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                className="flex items-start gap-4 p-6 bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow duration-300"
+              >
+                <div className={`w-12 h-12 bg-${feature.color}-50 rounded-2xl flex items-center justify-center shrink-0`}>
+                  <feature.icon className={`w-6 h-6 text-${feature.color}-600`} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 mb-1">{feature.title}</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed">{feature.desc}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

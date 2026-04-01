@@ -18,6 +18,7 @@ const CART_KEY_PREFIX = 'pcmaster_cart_';
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const [items, setItems] = useState<CartItem[]>([]);
+  const isLoadedRef = React.useRef(false);
 
   // Load giỏ hàng từ localStorage khi user thay đổi
   useEffect(() => {
@@ -27,11 +28,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       setItems([]);
     }
+    // Đánh dấu đã load xong, cho phép save
+    isLoadedRef.current = true;
+    return () => { isLoadedRef.current = false; };
   }, [user]);
 
-  // Lưu giỏ hàng vào localStorage mỗi khi items thay đổi
+  // Lưu giỏ hàng vào localStorage mỗi khi items thay đổi (chỉ sau khi đã load)
   useEffect(() => {
-    if (user) {
+    if (user && isLoadedRef.current) {
       localStorage.setItem(CART_KEY_PREFIX + user.id, JSON.stringify(items));
     }
   }, [items, user]);

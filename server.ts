@@ -18,7 +18,15 @@ const __dirname = path.dirname(__filename);
 //   DB_USER=root
 //   DB_PASSWORD=matkhau
 //   DB_NAME=pcmaster
-const JWT_SECRET = process.env.JWT_SECRET || "pcmaster_secret_key_change_in_production";
+const JWT_SECRET = process.env.JWT_SECRET || "pcmaster_default_dev_key";
+if (!process.env.JWT_SECRET) {
+  console.warn("⚠️  CẢNH BÁO: JWT_SECRET chưa được cấu hình trong .env.local — đang dùng key mặc định (chỉ dùng cho dev)!");
+}
+
+// ============ CẤU HÌNH GHN / DEMO MODE ============
+const GHN_TOKEN = process.env.GHN_TOKEN || "";
+const GHN_SHOP_ID = process.env.GHN_SHOP_ID || "";
+const SHIPPING_MODE = GHN_TOKEN ? "ghn" : "demo";  // demo = auto-simulate
 
 const DB_CONFIG = {
   host: process.env.DB_HOST || "localhost",
@@ -79,13 +87,16 @@ async function initDatabase() {
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS orders (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      user_id INT,
+      user_id INT DEFAULT NULL,
       customer_name VARCHAR(255) NOT NULL,
       customer_email VARCHAR(255) NOT NULL,
       total_amount INT NOT NULL,
       status VARCHAR(50) DEFAULT 'pending',
+      tracking_code VARCHAR(255) DEFAULT NULL,
+      shipping_provider VARCHAR(100) DEFAULT NULL,
+      shipped_at DATETIME DEFAULT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     )
   `);
 
@@ -101,10 +112,56 @@ async function initDatabase() {
     )
   `);
 
+  // Auto-migrate: đảm bảo orders.user_id hỗ trợ ON DELETE SET NULL cho DB cũ
+  try {
+    const [fkRows] = await pool.execute(
+      `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'user_id' AND REFERENCED_TABLE_NAME = 'users'`,
+      [DB_CONFIG.database]
+    ) as any;
+    if (fkRows.length > 0) {
+      const fkName = fkRows[0].CONSTRAINT_NAME;
+      // Kiểm tra nếu FK chưa có ON DELETE SET NULL thì migrate
+      const [fkDetail] = await pool.execute(
+        `SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS 
+         WHERE CONSTRAINT_SCHEMA = ? AND CONSTRAINT_NAME = ?`,
+        [DB_CONFIG.database, fkName]
+      ) as any;
+      if (fkDetail.length > 0 && fkDetail[0].DELETE_RULE !== 'SET NULL') {
+        await pool.execute(`ALTER TABLE orders DROP FOREIGN KEY \`${fkName}\``);
+        await pool.execute(`ALTER TABLE orders MODIFY user_id INT DEFAULT NULL`);
+        await pool.execute(`ALTER TABLE orders ADD CONSTRAINT \`${fkName}\` FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL`);
+        console.log("✅ Đã migrate FK orders.user_id → ON DELETE SET NULL");
+      }
+    }
+  } catch (e) {
+    // Bỏ qua nếu migrate thất bại (DB mới tạo sẽ không cần)
+  }
+
+  // Auto-migrate: thêm cột tracking nếu chưa có (cho DB cũ)
+  try {
+    const [cols] = await pool.execute(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'tracking_code'`,
+      [DB_CONFIG.database]
+    ) as any;
+    if (cols.length === 0) {
+      await pool.execute(`ALTER TABLE orders ADD COLUMN tracking_code VARCHAR(255) DEFAULT NULL`);
+      await pool.execute(`ALTER TABLE orders ADD COLUMN shipping_provider VARCHAR(100) DEFAULT NULL`);
+      await pool.execute(`ALTER TABLE orders ADD COLUMN shipped_at DATETIME DEFAULT NULL`);
+      console.log("✅ Đã migrate: thêm cột tracking cho orders");
+    }
+  } catch (e) {
+    // Bỏ qua
+  }
+
   // Seed dữ liệu mẫu nếu bảng trống
   const [catRows] = await pool.execute("SELECT COUNT(*) as count FROM categories") as any;
   if (catRows[0].count === 0) {
-    await pool.execute("INSERT INTO categories (name, slug) VALUES ('CPU', 'cpu'), ('VGA', 'vga'), ('RAM', 'ram'), ('Mainboard', 'mainboard'), ('SSD', 'ssd')");
+    const categoryValues = [['CPU', 'cpu'], ['VGA', 'vga'], ['RAM', 'ram'], ['Mainboard', 'mainboard'], ['SSD', 'ssd']];
+    for (const [name, slug] of categoryValues) {
+      await pool.execute("INSERT INTO categories (name, slug) VALUES (?, ?)", [name, slug]);
+    }
 
     await pool.execute(
       "INSERT INTO products (name, slug, description, price, stock, image_url, category_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -174,14 +231,24 @@ async function startServer() {
   // Auth Routes
   app.post("/api/auth/register", async (req, res) => {
     const { name, email, password } = req.body;
+    // Validate input
+    if (!name || typeof name !== "string" || name.trim().length < 2) {
+      return res.status(400).json({ error: "Họ tên phải có ít nhất 2 ký tự" });
+    }
+    if (!email || typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "Email không hợp lệ" });
+    }
+    if (!password || typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ error: "Mật khẩu phải có ít nhất 6 ký tự" });
+    }
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
       const [result] = await db.execute(
         "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-        [name, email, hashedPassword]
+        [name.trim(), email.trim().toLowerCase(), hashedPassword]
       ) as any;
-      const user = { id: result.insertId, name, email, role: "user" };
-      const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
+      const user = { id: result.insertId, name: name.trim(), email: email.trim().toLowerCase(), role: "user" };
+      const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
       res.status(201).json({ ...user, token });
     } catch (error) {
       res.status(400).json({ error: "Email đã tồn tại" });
@@ -194,7 +261,7 @@ async function startServer() {
     const user = rows[0];
     if (user && await bcrypt.compare(password, user.password)) {
       const { password: _, ...userWithoutPassword } = user;
-      const token = jwt.sign(userWithoutPassword, JWT_SECRET, { expiresIn: "7d" });
+      const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
       res.json({ ...userWithoutPassword, token });
     } else {
       res.status(401).json({ error: "Sai email hoặc mật khẩu" });
@@ -251,6 +318,16 @@ async function startServer() {
       const orderId = orderResult.insertId;
 
       for (const item of items) {
+        // Kiểm tra stock đủ hàng
+        const [stockRows] = await conn.execute(
+          "SELECT stock FROM products WHERE id = ? FOR UPDATE",
+          [item.id]
+        ) as any;
+        if (!stockRows[0] || stockRows[0].stock < item.quantity) {
+          await conn.rollback();
+          conn.release();
+          return res.status(400).json({ error: `Sản phẩm "${item.name || item.id}" không đủ hàng trong kho` });
+        }
         await conn.execute(
           "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
           [orderId, item.id, item.quantity, item.price]
@@ -289,21 +366,79 @@ async function startServer() {
     res.json(orders);
   });
 
-  app.put("/api/admin/orders/:id", authenticateToken, requireAdmin, async (req, res) => {
-    const { status } = req.body;
-    const validStatuses = ["pending", "processing", "shipped", "delivered", "cancelled"];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: "Trạng thái không hợp lệ" });
+  // Admin: Xác nhận đơn hàng → tự động tạo vận đơn & giao hàng
+  app.post("/api/admin/orders/:id/confirm", authenticateToken, requireAdmin, async (req, res) => {
+    const orderId = req.params.id;
+    const [rows] = await db.execute("SELECT * FROM orders WHERE id = ?", [orderId]) as any;
+    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ error: "Chỉ có thể xác nhận đơn hàng đang chờ xử lý" });
     }
-    try {
-      await db.execute(
-        "UPDATE orders SET status = ? WHERE id = ?",
-        [status, req.params.id]
-      );
-      res.json({ message: "Cập nhật trạng thái thành công" });
-    } catch (error) {
-      res.status(400).json({ error: "Cập nhật trạng thái thất bại" });
+
+    let trackingCode: string;
+    let provider: string;
+
+    if (SHIPPING_MODE === "ghn") {
+      try {
+        const ghnRes = await fetch("https://dev-online-gateway.ghn.vn/shiip/public-api/v2/shipping-order/create", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Token": GHN_TOKEN,
+            "ShopId": GHN_SHOP_ID,
+          },
+          body: JSON.stringify({
+            to_name: rows[0].customer_name,
+            to_phone: "0900000000",
+            to_address: "Demo address",
+            to_ward_code: "20308",
+            to_district_id: 1444,
+            weight: 500,
+            length: 20,
+            width: 20,
+            height: 10,
+            service_type_id: 2,
+            payment_type_id: 2,
+            required_note: "KHONGCHOXEMHANG",
+            items: [{ name: "PC Parts", quantity: 1, weight: 500 }],
+          }),
+        });
+        const ghnData = await ghnRes.json();
+        trackingCode = ghnData.data?.order_code || `GHN${Date.now()}`;
+        provider = "GHN";
+      } catch {
+        return res.status(500).json({ error: "Lỗi kết nối GHN API" });
+      }
+    } else {
+      trackingCode = `DEMO${Date.now().toString(36).toUpperCase()}`;
+      provider = "DEMO";
     }
+
+    await db.execute(
+      "UPDATE orders SET status = 'processing', tracking_code = ?, shipping_provider = ?, shipped_at = NOW() WHERE id = ?",
+      [trackingCode, provider, orderId]
+    );
+
+    res.json({ tracking_code: trackingCode, provider, message: "Đã xác nhận & tạo vận đơn thành công" });
+  });
+
+  // Admin: Hủy đơn hàng
+  app.post("/api/admin/orders/:id/cancel", authenticateToken, requireAdmin, async (req, res) => {
+    const orderId = req.params.id;
+    const [rows] = await db.execute("SELECT * FROM orders WHERE id = ?", [orderId]) as any;
+    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ error: "Chỉ có thể hủy đơn hàng đang chờ xử lý" });
+    }
+
+    // Hoàn trả stock
+    const [items] = await db.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", [orderId]) as any;
+    for (const item of items) {
+      await db.execute("UPDATE products SET stock = stock + ? WHERE id = ?", [item.quantity, item.product_id]);
+    }
+
+    await db.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", [orderId]);
+    res.json({ message: "Đã hủy đơn hàng & hoàn trả kho" });
   });
 
   app.post("/api/admin/products", authenticateToken, requireAdmin, async (req, res) => {
@@ -320,8 +455,20 @@ async function startServer() {
   });
 
   app.delete("/api/admin/products/:id", authenticateToken, requireAdmin, async (req, res) => {
-    await db.execute("DELETE FROM products WHERE id = ?", [req.params.id]);
-    res.json({ message: "Đã xóa sản phẩm" });
+    try {
+      // Kiểm tra sản phẩm có trong đơn hàng không
+      const [orderItems] = await db.execute(
+        "SELECT COUNT(*) as count FROM order_items WHERE product_id = ?",
+        [req.params.id]
+      ) as any;
+      if (orderItems[0].count > 0) {
+        return res.status(400).json({ error: "Không thể xóa sản phẩm đã có trong đơn hàng" });
+      }
+      await db.execute("DELETE FROM products WHERE id = ?", [req.params.id]);
+      res.json({ message: "Đã xóa sản phẩm" });
+    } catch (error) {
+      res.status(500).json({ error: "Xóa sản phẩm thất bại" });
+    }
   });
 
   app.put("/api/admin/products/:id", authenticateToken, requireAdmin, async (req, res) => {
@@ -349,9 +496,176 @@ async function startServer() {
     if (rows[0] && rows[0].role === "admin") {
       return res.status(403).json({ error: "Không thể xóa tài khoản admin" });
     }
-    await db.execute("DELETE FROM users WHERE id = ?", [req.params.id]);
-    res.json({ message: "Đã xóa người dùng" });
+    try {
+      // Set user_id = NULL cho đơn hàng liên quan trước khi xóa
+      await db.execute("UPDATE orders SET user_id = NULL WHERE user_id = ?", [req.params.id]);
+      await db.execute("DELETE FROM users WHERE id = ?", [req.params.id]);
+      res.json({ message: "Đã xóa người dùng" });
+    } catch (error) {
+      res.status(500).json({ error: "Xóa người dùng thất bại" });
+    }
   });
+
+  // ============ SHIPPING / TRACKING APIS ============
+
+  // User: xem đơn hàng của mình
+  app.get("/api/orders/my", authenticateToken, async (req, res) => {
+    const [orders] = await db.execute(
+      "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
+      [req.user.id]
+    );
+    res.json(orders);
+  });
+
+  // User: xem chi tiết tracking
+  app.get("/api/orders/:id/tracking", authenticateToken, async (req, res) => {
+    const [rows] = await db.execute(
+      "SELECT id, status, tracking_code, shipping_provider, shipped_at, created_at FROM orders WHERE id = ? AND user_id = ?",
+      [req.params.id, req.user.id]
+    ) as any;
+    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+
+    const order = rows[0];
+    // Tạo timeline dựa trên trạng thái hiện tại
+    const timeline = [];
+    const statusOrder = ["pending", "processing", "shipped", "delivered"];
+    const statusIdx = statusOrder.indexOf(order.status);
+
+    timeline.push({ status: "pending", label: "Đơn hàng đã đặt", time: order.created_at, done: true });
+    if (statusIdx >= 1) timeline.push({ status: "processing", label: "Đang xử lý & đóng gói", time: order.shipped_at, done: true });
+    if (statusIdx >= 2) timeline.push({ status: "shipped", label: "Đang vận chuyển", time: null, done: true });
+    if (statusIdx >= 3) timeline.push({ status: "delivered", label: "Đã giao hàng", time: null, done: true });
+
+    // Thêm các bước chưa hoàn thành
+    for (let i = statusIdx + 1; i < statusOrder.length; i++) {
+      const labels: Record<string, string> = { processing: "Đang xử lý & đóng gói", shipped: "Đang vận chuyển", delivered: "Đã giao hàng" };
+      timeline.push({ status: statusOrder[i], label: labels[statusOrder[i]], time: null, done: false });
+    }
+
+    let trackingUrl = null;
+    if (order.tracking_code) {
+      if (order.shipping_provider === "GHN") {
+        trackingUrl = `https://tracking.ghn.dev/?order_code=${order.tracking_code}`;
+      } else {
+        trackingUrl = null; // Demo mode: tracking trên trang nội bộ
+      }
+    }
+
+    res.json({ ...order, timeline, tracking_url: trackingUrl });
+  });
+
+  // User: xem items của đơn hàng
+  app.get("/api/orders/:id/items", authenticateToken, async (req, res) => {
+    const [orderCheck] = await db.execute("SELECT id FROM orders WHERE id = ? AND user_id = ?", [req.params.id, req.user.id]) as any;
+    if (!orderCheck[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+    const [items] = await db.execute(
+      `SELECT oi.*, p.name as product_name, p.image_url 
+       FROM order_items oi 
+       JOIN products p ON oi.product_id = p.id 
+       WHERE oi.order_id = ?`,
+      [req.params.id]
+    );
+    res.json(items);
+  });
+
+  // ============ DEMO: Tự động chuyển trạng thái ============
+  if (SHIPPING_MODE === "demo") {
+    const DEMO_TRANSITIONS: Record<string, { next: string; delayMs: number }> = {
+      processing: { next: "shipped", delayMs: 30_000 },   // 30s → đang giao
+      shipped:    { next: "delivered", delayMs: 60_000 },  // 60s → đã giao
+    };
+
+    const syncDemoOrders = async () => {
+      try {
+        for (const [fromStatus, { next, delayMs }] of Object.entries(DEMO_TRANSITIONS)) {
+          const [rows] = await db.execute(
+            `SELECT id, shipped_at, status FROM orders 
+             WHERE status = ? AND shipping_provider = 'DEMO' AND shipped_at IS NOT NULL 
+             AND TIMESTAMPDIFF(SECOND, shipped_at, NOW()) > ?`,
+            [fromStatus, delayMs / 1000]
+          ) as any;
+
+          for (const order of rows) {
+            await db.execute("UPDATE orders SET status = ? WHERE id = ?", [next, order.id]);
+            console.log(`📦 Demo: Đơn #${order.id}: ${fromStatus} → ${next}`);
+          }
+        }
+      } catch (e) {
+        // Bỏ qua lỗi cron
+      }
+    };
+
+    // Chạy mỗi 10 giây
+    setInterval(syncDemoOrders, 10_000);
+    console.log(`🚀 Chế độ DEMO: trạng thái đơn hàng sẽ tự chuyển (processing→30s→shipped→60s→delivered)`);
+  } else {
+    // ============ GHN: Polling trạng thái thật ============
+    // Map trạng thái GHN → trạng thái đơn hàng nội bộ
+    const GHN_STATUS_MAP: Record<string, string> = {
+      "ready_to_pick":  "processing",   // Chờ lấy hàng
+      "picking":        "processing",   // Đang lấy hàng
+      "picked":         "processing",   // Đã lấy hàng
+      "storing":        "processing",   // Đã nhập kho
+      "transporting":   "shipped",      // Đang vận chuyển
+      "delivering":     "shipped",      // Đang giao hàng
+      "delivered":      "delivered",    // Đã giao
+      "delivery_fail":  "shipped",      // Giao thất bại (vẫn đang giao)
+      "return":         "cancelled",    // Hoàn trả
+      "returned":       "cancelled",    // Đã hoàn trả
+      "cancel":         "cancelled",    // Hủy đơn
+    };
+
+    const syncGhnOrders = async () => {
+      try {
+        // Lấy tất cả đơn GHN đang chờ cập nhật (chưa delivered/cancelled)
+        const [rows] = await db.execute(
+          `SELECT id, tracking_code, status FROM orders 
+           WHERE shipping_provider = 'GHN' 
+           AND tracking_code IS NOT NULL 
+           AND status NOT IN ('delivered', 'cancelled')`
+        ) as any;
+
+        for (const order of rows) {
+          try {
+            const ghnRes = await fetch(
+              "https://dev-online-gateway.ghn.vn/shiip/public-api/v2/shipping-order/detail",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Token": GHN_TOKEN,
+                },
+                body: JSON.stringify({ order_code: order.tracking_code }),
+              }
+            );
+            const ghnData = await ghnRes.json();
+            const ghnStatus = ghnData.data?.status;
+
+            if (ghnStatus && GHN_STATUS_MAP[ghnStatus]) {
+              const newStatus = GHN_STATUS_MAP[ghnStatus];
+              if (newStatus !== order.status) {
+                await db.execute(
+                  "UPDATE orders SET status = ? WHERE id = ?",
+                  [newStatus, order.id]
+                );
+                console.log(`🚚 GHN: Đơn #${order.id} (${order.tracking_code}): ${order.status} → ${newStatus} (GHN: ${ghnStatus})`);
+              }
+            }
+          } catch {
+            // Bỏ qua lỗi từng đơn, tiếp tục đơn khác
+          }
+        }
+      } catch (e) {
+        console.error("Lỗi polling GHN:", e);
+      }
+    };
+
+    // Polling mỗi 5 phút
+    setInterval(syncGhnOrders, 5 * 60_000);
+    // Chạy lần đầu sau 10s
+    setTimeout(syncGhnOrders, 10_000);
+    console.log(`🚚 Chế độ GHN: polling trạng thái mỗi 5 phút`);
+  }
 
   // Vite middleware cho development
   if (process.env.NODE_ENV !== "production") {

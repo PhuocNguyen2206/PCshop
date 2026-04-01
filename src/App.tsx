@@ -7,9 +7,11 @@ import { UserStore } from './components/UserStore';
 import { ProductDetail } from './components/ProductDetail';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AuthModal } from './components/AuthModal';
+import { OrderHistory } from './components/OrderHistory';
+import { ToastProvider } from './components/Toast';
 
 const AppContent = () => {
-  const [view, setView] = useState<'store' | 'admin' | 'product'>('store');
+  const [view, setView] = useState<'store' | 'admin' | 'product' | 'orders'>('store');
   const [selectedProductSlug, setSelectedProductSlug] = useState<string | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const { user } = useAuth();
@@ -37,25 +39,31 @@ const AppContent = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleViewOrders = () => {
+    setView('orders');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
-    <div className="min-h-screen bg-white font-sans selection:bg-indigo-100 selection:text-indigo-900">
+    <div className="min-h-screen bg-white font-sans">
       <Navbar 
         onAdminToggle={handleAdminToggle}
         isAdmin={view === 'admin'}
         onBackToStore={handleBackToStore}
         onAuthOpen={() => setIsAuthOpen(true)}
+        onViewOrders={handleViewOrders}
       />
 
       <main>
         <AnimatePresence mode="wait">
           {view === 'store' && (
             <motion.div key="store" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-              <UserStore onProductClick={handleProductClick} />
+              <UserStore onProductClick={handleProductClick} onAuthOpen={() => setIsAuthOpen(true)} />
             </motion.div>
           )}
           {view === 'product' && selectedProductSlug && (
             <motion.div key="product" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-              <ProductDetail slug={selectedProductSlug} onBack={handleBackToStore} />
+              <ProductDetail slug={selectedProductSlug} onBack={handleBackToStore} onAuthOpen={() => setIsAuthOpen(true)} />
             </motion.div>
           )}
           {view === 'admin' && user?.role === 'admin' && (
@@ -63,24 +71,64 @@ const AppContent = () => {
               <AdminDashboard />
             </motion.div>
           )}
+          {view === 'orders' && (
+            <motion.div key="orders" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+              <OrderHistory />
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
 
-      <footer className="bg-gradient-to-b from-zinc-50 to-zinc-100/50 border-t border-zinc-100 py-16 mt-24">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="flex items-center gap-2 text-zinc-400">
-              <div className="w-6 h-6 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-md"></div>
-              <span className="font-bold text-zinc-600">PC MASTER</span>
+      <footer className="bg-slate-950 text-slate-400 pt-16 pb-8 mt-24 relative overflow-hidden">
+        {/* Decorative gradient */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent" />
+        
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-10 mb-12">
+            {/* Brand */}
+            <div className="md:col-span-2">
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                  <span className="text-white font-black text-sm">PC</span>
+                </div>
+                <span className="font-extrabold text-white text-lg">PC MASTER</span>
+              </div>
+              <p className="text-sm text-slate-500 leading-relaxed max-w-xs">
+                Cung cấp linh kiện máy tính chính hãng, hiệu năng cao cho game thủ và chuyên gia đồ họa trên toàn quốc.
+              </p>
             </div>
-            <div className="flex items-center gap-6 text-sm">
-              <a href="#" className="text-zinc-400 hover:text-indigo-600 transition-colors">Sản phẩm</a>
-              <a href="#" className="text-zinc-400 hover:text-indigo-600 transition-colors">Khuyến mãi</a>
-              <a href="#" className="text-zinc-400 hover:text-indigo-600 transition-colors">Liên hệ</a>
+
+            {/* Links */}
+            <div>
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Sản phẩm</h4>
+              <div className="space-y-2.5">
+                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Linh kiện PC</button>
+                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Khuyến mãi</button>
+                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Mới nhất</button>
+              </div>
             </div>
-            <p className="text-zinc-400 text-sm">© 2026 PC MASTER. All rights reserved.</p>
+
+            <div>
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Hỗ trợ</h4>
+              <div className="space-y-2.5">
+                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Liên hệ</button>
+                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Chính sách</button>
+                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">FAQ</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom */}
+          <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+            <p className="text-xs text-slate-600">© 2026 PC MASTER. All rights reserved.</p>
+            <div className="flex items-center gap-4">
+              <span className="text-[11px] text-slate-600 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                Hệ thống hoạt động bình thường
+              </span>
+            </div>
           </div>
         </div>
       </footer>
@@ -92,7 +140,9 @@ const App = () => {
   return (
     <AuthProvider>
       <CartProvider>
-        <AppContent />
+        <ToastProvider>
+          <AppContent />
+        </ToastProvider>
       </CartProvider>
     </AuthProvider>
   );
