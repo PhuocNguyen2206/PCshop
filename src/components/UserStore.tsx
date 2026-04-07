@@ -1,17 +1,52 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Package, Sparkles, ShoppingCart, Zap, Shield, Truck, Monitor, Cpu, HardDrive, Star } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Plus, Package, Sparkles, ShoppingCart, Zap, Shield, Truck, Monitor, Cpu, HardDrive, Star, Search, SlidersHorizontal, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../CartContext';
 import { useAuth } from '../AuthContext';
 import { Product, Category } from '../types';
+import { useDebounce } from '../hooks/useDebounce';
+import { Pagination } from './Pagination';
+
+interface PaginationInfo {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  itemsPerPage: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+}
+
+const PRICE_RANGES = [
+  { label: 'Tất cả', min: undefined, max: undefined },
+  { label: 'Dưới 5 triệu', min: 0, max: 5000000 },
+  { label: '5 - 15 triệu', min: 5000000, max: 15000000 },
+  { label: '15 - 30 triệu', min: 15000000, max: 30000000 },
+  { label: 'Trên 30 triệu', min: 30000000, max: undefined },
+];
+
+const SORT_OPTIONS = [
+  { label: 'Mới nhất', value: 'created_at', order: 'desc' },
+  { label: 'Giá tăng dần', value: 'price', order: 'asc' },
+  { label: 'Giá giảm dần', value: 'price', order: 'desc' },
+  { label: 'Tên A-Z', value: 'name', order: 'asc' },
+];
 
 export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slug: string) => void, onAuthOpen: () => void }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [addedId, setAddedId] = useState<number | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedPriceRange, setSelectedPriceRange] = useState(0);
+  const [selectedSort, setSelectedSort] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationInfo | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const { addToCart } = useCart();
   const { isAuthenticated } = useAuth();
+
+  const debouncedSearch = useDebounce(searchTerm, 500);
 
   useEffect(() => {
     fetch('/api/categories')
@@ -20,13 +55,47 @@ export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slu
       .catch(() => setCategories([]));
   }, []);
 
+  // Reset page khi filter thay đổi
   useEffect(() => {
-    const url = selectedCategory ? `/api/products?category=${selectedCategory}` : '/api/products';
-    fetch(url)
+    setCurrentPage(1);
+  }, [debouncedSearch, selectedCategory, selectedPriceRange, selectedSort]);
+
+  // Fetch products với search, filter, pagination
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (selectedCategory) params.set('category', selectedCategory);
+    if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+
+    const priceRange = PRICE_RANGES[selectedPriceRange];
+    if (priceRange.min !== undefined) params.set('minPrice', String(priceRange.min));
+    if (priceRange.max !== undefined) params.set('maxPrice', String(priceRange.max));
+
+    const sortOption = SORT_OPTIONS[selectedSort];
+    params.set('sort', sortOption.value);
+    params.set('order', sortOption.order);
+    params.set('page', String(currentPage));
+    params.set('limit', '12');
+
+    setLoading(true);
+    fetch(`/api/products?${params.toString()}`)
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
-      .then(setProducts)
-      .catch(() => setProducts([]));
-  }, [selectedCategory]);
+      .then((result) => {
+        setProducts(result.data);
+        setPagination(result.pagination);
+      })
+      .catch(() => { setProducts([]); setPagination(null); })
+      .finally(() => setLoading(false));
+  }, [selectedCategory, debouncedSearch, selectedPriceRange, selectedSort, currentPage]);
+
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setSelectedCategory(null);
+    setSelectedPriceRange(0);
+    setSelectedSort(0);
+    setCurrentPage(1);
+  };
+
+  const hasActiveFilters = searchTerm || selectedCategory || selectedPriceRange > 0 || selectedSort > 0;
 
   const handleAddToCart = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();
@@ -152,6 +221,116 @@ export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slu
           <p className="text-slate-500 max-w-lg mx-auto">Lựa chọn từ các thương hiệu uy tín hàng đầu thế giới</p>
         </motion.div>
 
+        {/* ── Search Bar ──────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="mb-6"
+        >
+          <div className="relative max-w-xl mx-auto">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Tìm kiếm sản phẩm..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-12 pr-12 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 shadow-sm transition-all duration-200"
+            />
+            {searchTerm && (
+              <button 
+                onClick={() => setSearchTerm('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+            {/* Debounce indicator */}
+            {searchTerm !== debouncedSearch && searchTerm.trim() && (
+              <div className="absolute right-12 top-1/2 -translate-y-1/2">
+                <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* ── Filter Toggle & Sort ─────────────── */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
+              showFilters || hasActiveFilters
+                ? 'bg-indigo-50 text-indigo-600 border border-indigo-200'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Bộ lọc
+            {hasActiveFilters && (
+              <span className="w-2 h-2 bg-indigo-500 rounded-full" />
+            )}
+          </button>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">Sắp xếp:</span>
+            <select
+              value={selectedSort}
+              onChange={(e) => setSelectedSort(Number(e.target.value))}
+              className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 cursor-pointer"
+            >
+              {SORT_OPTIONS.map((opt, i) => (
+                <option key={i} value={i}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* ── Filters Panel ──────────────── */}
+        <AnimatePresence>
+          {showFilters && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25 }}
+              className="overflow-hidden"
+            >
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 mb-6 space-y-5">
+                {/* Khoảng giá */}
+                <div>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Khoảng giá</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {PRICE_RANGES.map((range, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setSelectedPriceRange(i)}
+                        className={`px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+                          selectedPriceRange === i
+                            ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-500/25'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300 hover:shadow-sm'
+                        }`}
+                      >
+                        {range.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Xóa bộ lọc */}
+                {hasActiveFilters && (
+                  <button
+                    onClick={handleClearFilters}
+                    className="flex items-center gap-1.5 text-sm font-medium text-red-500 hover:text-red-600 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Xóa tất cả bộ lọc
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Categories */}
         <motion.div 
           initial={{ opacity: 0, y: 10 }}
@@ -178,6 +357,12 @@ export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slu
 
         {/* Product Grid */}
         <div className="min-h-[60vh]">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+              <div className="w-10 h-10 border-3 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4" />
+              <p className="text-sm font-medium">Đang tải sản phẩm...</p>
+            </div>
+          ) : (
           <AnimatePresence mode="wait">
             {products.length === 0 ? (
               <motion.div 
@@ -287,6 +472,15 @@ export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slu
               </motion.div>
             )}
           </AnimatePresence>
+          )}
+
+          {/* Pagination */}
+          {pagination && !loading && (
+            <Pagination
+              pagination={pagination}
+              onPageChange={setCurrentPage}
+            />
+          )}
         </div>
       </div>
 

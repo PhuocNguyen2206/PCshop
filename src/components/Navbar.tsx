@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, LayoutDashboard, Package, ShoppingBag, LogOut, LogIn, ClipboardList, Cpu } from 'lucide-react';
+import { ShoppingCart, LayoutDashboard, Package, ShoppingBag, LogOut, LogIn, ClipboardList, Cpu, UserCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../CartContext';
 import { useAuth } from '../AuthContext';
 import { CartDrawer } from './CartDrawer';
 
-export const Navbar = ({ onAdminToggle, isAdmin, onBackToStore, onAuthOpen, onViewOrders }: { onAdminToggle: () => void, isAdmin: boolean, onBackToStore: () => void, onAuthOpen: () => void, onViewOrders: () => void }) => {
+export const Navbar = ({ onAdminToggle, isAdmin, onBackToStore, onAuthOpen, onViewOrders, onViewProfile }: { onAdminToggle: () => void, isAdmin: boolean, onBackToStore: () => void, onAuthOpen: () => void, onViewOrders: () => void, onViewProfile: () => void }) => {
   const { items } = useCart();
   const { user, logout, isAuthenticated } = useAuth();
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -64,15 +64,19 @@ export const Navbar = ({ onAdminToggle, isAdmin, onBackToStore, onAuthOpen, onVi
           <div className="flex items-center gap-2.5">
             {isAuthenticated ? (
               <div className="flex items-center gap-2.5">
-                <div className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 bg-slate-50/80 rounded-full border border-slate-100">
-                  <div className="w-7 h-7 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm shadow-indigo-500/20">
-                    {user?.name?.charAt(0).toUpperCase()}
-                  </div>
+                <button onClick={onViewProfile} className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 bg-slate-50/80 rounded-full border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/50 transition-all cursor-pointer">
+                  {user?.avatar ? (
+                    <img src={user.avatar} alt="" className="w-7 h-7 rounded-full object-cover border border-indigo-200 shadow-sm" />
+                  ) : (
+                    <div className="w-7 h-7 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm shadow-indigo-500/20">
+                      {user?.name?.charAt(0).toUpperCase()}
+                    </div>
+                  )}
                   <div className="flex flex-col items-start">
                     <span className="text-xs font-bold text-slate-800 leading-tight">{user?.name}</span>
                     <span className="text-[10px] text-slate-400 leading-tight">{user?.role === 'admin' ? 'Quản trị viên' : 'Khách hàng'}</span>
                   </div>
-                </div>
+                </button>
                 {user?.role === 'admin' && (
                   <motion.button 
                     whileHover={{ scale: 1.1 }}

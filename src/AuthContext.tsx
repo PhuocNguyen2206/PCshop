@@ -7,6 +7,8 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
+  updateAvatar: (avatar: string) => void;
+  updatePhone: (phone: string) => void;
   isAuthenticated: boolean;
   authHeaders: () => Record<string, string>;
 }
@@ -63,14 +65,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('pcmaster_token');
   };
 
-  const authHeaders = () => {
+  const updateAvatar = (avatar: string) => {
+    if (user) {
+      const updated = { ...user, avatar };
+      setUser(updated);
+      localStorage.setItem('pcmaster_user', JSON.stringify(updated));
+    }
+  };
+
+  const updatePhone = (phone: string) => {
+    if (user) {
+      const updated = { ...user, phone };
+      setUser(updated);
+      localStorage.setItem('pcmaster_user', JSON.stringify(updated));
+    }
+  };
+
+  const authHeaders = (): Record<string, string> => {
     return token ? { 'Authorization': `Bearer ${token}` } : {};
   };
 
   const isAuthenticated = !!user;
 
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout, isAuthenticated, authHeaders }}>
+    <AuthContext.Provider value={{ user, token, login, register, logout, updateAvatar, updatePhone, isAuthenticated, authHeaders }}>
       {children}
     </AuthContext.Provider>
   );

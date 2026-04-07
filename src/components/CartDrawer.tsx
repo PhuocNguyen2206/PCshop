@@ -10,11 +10,11 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
   const { user, authHeaders } = useAuth();
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
-  const [customerInfo, setCustomerInfo] = useState({ name: user?.name || '', email: user?.email || '' });
+  const [customerInfo, setCustomerInfo] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '', address: '' });
   const { toast } = useToast();
 
   useEffect(() => {
-    if (user) setCustomerInfo({ name: user.name, email: user.email });
+    if (user) setCustomerInfo({ name: user.name, email: user.email, phone: user.phone || '', address: '' });
   }, [user]);
 
   useEffect(() => {
@@ -23,7 +23,7 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
   }, [isOpen]);
 
   const handleCheckout = async () => {
-    if (!customerInfo.name || !customerInfo.email) {
+    if (!customerInfo.name || !customerInfo.email || !customerInfo.phone || !customerInfo.address) {
       toast.warning('Vui lòng nhập đầy đủ thông tin');
       return;
     }
@@ -35,6 +35,8 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
           user_id: user?.id,
           customer_name: customerInfo.name,
           customer_email: customerInfo.email,
+          customer_phone: customerInfo.phone,
+          shipping_address: customerInfo.address,
           items,
           total_amount: total,
         }),
@@ -221,6 +223,20 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
                         className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         value={customerInfo.email}
                         onChange={e => setCustomerInfo({ ...customerInfo, email: e.target.value })}
+                      />
+                      <input
+                        type="tel"
+                        placeholder="Số điện thoại"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        value={customerInfo.phone}
+                        onChange={e => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                      />
+                      <textarea
+                        placeholder="Địa chỉ giao hàng"
+                        rows={2}
+                        className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+                        value={customerInfo.address}
+                        onChange={e => setCustomerInfo({ ...customerInfo, address: e.target.value })}
                       />
                       <div className="flex gap-2 pt-1">
                         <button

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Product, Category, Order, User } from '../types';
 import { useAuth } from '../AuthContext';
 import { useToast } from './Toast';
+import { ImageUpload } from './ImageUpload';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
@@ -77,7 +78,7 @@ export const AdminDashboard = () => {
     const headers = authHeaders();
     fetch('/api/admin/stats', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setStats).catch(() => {});
     fetch('/api/admin/orders', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setOrders).catch(() => {});
-    fetch('/api/products').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setProducts).catch(() => {});
+    fetch('/api/products?limit=1000').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(r => setProducts(r.data || r)).catch(() => {});
     fetch('/api/categories').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setCategories).catch(() => {});
     fetch('/api/admin/users', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setUsers).catch(() => {});
   }, []);
@@ -549,13 +550,21 @@ export const AdminDashboard = () => {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">URL Hình ảnh</label>
+                  <ImageUpload
+                    endpoint="/api/upload/product"
+                    fieldName="image"
+                    currentImage={editingProduct.image_url}
+                    onUploadSuccess={(url) => setEditingProduct({...editingProduct, image_url: url})}
+                    maxSizeMB={5}
+                    shape="square"
+                    label="Hình ảnh sản phẩm"
+                  />
                   <input 
                     type="url" 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm mt-2"
                     value={editingProduct.image_url}
                     onChange={e => setEditingProduct({...editingProduct, image_url: e.target.value})}
-                    required
+                    placeholder="Hoặc nhập URL ảnh trực tiếp"
                   />
                 </div>
 

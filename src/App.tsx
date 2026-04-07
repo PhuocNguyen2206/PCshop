@@ -8,10 +8,11 @@ import { ProductDetail } from './components/ProductDetail';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AuthModal } from './components/AuthModal';
 import { OrderHistory } from './components/OrderHistory';
+import { ProfilePage } from './components/ProfilePage';
 import { ToastProvider } from './components/Toast';
 
 const AppContent = () => {
-  const [view, setView] = useState<'store' | 'admin' | 'product' | 'orders'>('store');
+  const [view, setView] = useState<'store' | 'admin' | 'product' | 'orders' | 'profile'>('store');
   const [selectedProductSlug, setSelectedProductSlug] = useState<string | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const { user } = useAuth();
@@ -44,6 +45,11 @@ const AppContent = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleViewProfile = () => {
+    setView('profile');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <div className="min-h-screen bg-white font-sans">
       <Navbar 
@@ -52,6 +58,7 @@ const AppContent = () => {
         onBackToStore={handleBackToStore}
         onAuthOpen={() => setIsAuthOpen(true)}
         onViewOrders={handleViewOrders}
+        onViewProfile={handleViewProfile}
       />
 
       <main>
@@ -74,6 +81,11 @@ const AppContent = () => {
           {view === 'orders' && (
             <motion.div key="orders" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
               <OrderHistory />
+            </motion.div>
+          )}
+          {view === 'profile' && (
+            <motion.div key="profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+              <ProfilePage />
             </motion.div>
           )}
         </AnimatePresence>

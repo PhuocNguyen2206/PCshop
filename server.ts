@@ -2,10 +2,13 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import mysql from "mysql2/promise";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import multer from "multer";
+import sharp from "sharp";
 
 dotenv.config({ path: ".env.local" });
 
@@ -69,6 +72,8 @@ async function initDatabase() {
       stock INT DEFAULT 0,
       image_url TEXT,
       category_id INT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       FOREIGN KEY (category_id) REFERENCES categories(id)
     )
   `);
@@ -79,6 +84,7 @@ async function initDatabase() {
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       password VARCHAR(255) NOT NULL,
+      phone VARCHAR(20) DEFAULT NULL,
       role VARCHAR(50) DEFAULT 'user',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -90,12 +96,15 @@ async function initDatabase() {
       user_id INT DEFAULT NULL,
       customer_name VARCHAR(255) NOT NULL,
       customer_email VARCHAR(255) NOT NULL,
+      customer_phone VARCHAR(20) DEFAULT NULL,
+      shipping_address TEXT DEFAULT NULL,
       total_amount INT NOT NULL,
       status VARCHAR(50) DEFAULT 'pending',
       tracking_code VARCHAR(255) DEFAULT NULL,
       shipping_provider VARCHAR(100) DEFAULT NULL,
       shipped_at DATETIME DEFAULT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     )
   `);
@@ -109,6 +118,28 @@ async function initDatabase() {
       price INT,
       FOREIGN KEY (order_id) REFERENCES orders(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
+    )
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS product_images (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      product_id INT NOT NULL,
+      image_url TEXT NOT NULL,
+      sort_order INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS order_status_history (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id INT NOT NULL,
+      status VARCHAR(50) NOT NULL,
+      note TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
     )
   `);
 
@@ -154,6 +185,74 @@ async function initDatabase() {
   } catch (e) {
     // Bỏ qua
   }
+
+  // Auto-migrate: thêm cột avatar cho users (Tuần 8)
+  try {
+    const [avatarCols] = await pool.execute(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'avatar'`,
+      [DB_CONFIG.database]
+    ) as any;
+    if (avatarCols.length === 0) {
+      await pool.execute(`ALTER TABLE users ADD COLUMN avatar VARCHAR(500) DEFAULT NULL`);
+      console.log("✅ Đã migrate: thêm cột avatar cho users");
+    }
+  } catch (e) {
+    // Bỏ qua
+  }
+
+  // Auto-migrate: thêm cột phone cho users
+  try {
+    const [phoneCols] = await pool.execute(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'phone'`,
+      [DB_CONFIG.database]
+    ) as any;
+    if (phoneCols.length === 0) {
+      await pool.execute(`ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT NULL AFTER password`);
+      console.log("✅ Đã migrate: thêm cột phone cho users");
+    }
+  } catch (e) {}
+
+  // Auto-migrate: thêm cột phone, address, updated_at cho orders
+  try {
+    const [orderCols] = await pool.execute(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'customer_phone'`,
+      [DB_CONFIG.database]
+    ) as any;
+    if (orderCols.length === 0) {
+      await pool.execute(`ALTER TABLE orders ADD COLUMN customer_phone VARCHAR(20) DEFAULT NULL AFTER customer_email`);
+      await pool.execute(`ALTER TABLE orders ADD COLUMN shipping_address TEXT DEFAULT NULL AFTER customer_phone`);
+      console.log("✅ Đã migrate: thêm cột phone, address cho orders");
+    }
+  } catch (e) {}
+
+  // Auto-migrate: thêm updated_at cho products và orders
+  try {
+    const [prodUpdated] = await pool.execute(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' AND COLUMN_NAME = 'updated_at'`,
+      [DB_CONFIG.database]
+    ) as any;
+    if (prodUpdated.length === 0) {
+      await pool.execute(`ALTER TABLE products ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+      await pool.execute(`ALTER TABLE products ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+      console.log("✅ Đã migrate: thêm created_at, updated_at cho products");
+    }
+  } catch (e) {}
+
+  try {
+    const [orderUpdated] = await pool.execute(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'updated_at'`,
+      [DB_CONFIG.database]
+    ) as any;
+    if (orderUpdated.length === 0) {
+      await pool.execute(`ALTER TABLE orders ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+      console.log("✅ Đã migrate: thêm updated_at cho orders");
+    }
+  } catch (e) {}
 
   // Seed dữ liệu mẫu nếu bảng trống
   const [catRows] = await pool.execute("SELECT COUNT(*) as count FROM categories") as any;
@@ -207,6 +306,52 @@ async function startServer() {
 
   app.use(express.json());
 
+  // ============ UPLOAD FILE CONFIG (Multer) ============
+  const UPLOAD_DIR = path.join(__dirname, "uploads");
+  const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+  // Tạo thư mục uploads nếu chưa tồn tại
+  const ensureDir = (dir: string) => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  };
+  ensureDir(path.join(UPLOAD_DIR, "avatars"));
+  ensureDir(path.join(UPLOAD_DIR, "products"));
+
+  // Cấu hình storage cho avatar
+  const avatarStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, path.join(UPLOAD_DIR, "avatars")),
+    filename: (req: any, _file, cb) => {
+      const ext = path.extname(_file.originalname).toLowerCase();
+      cb(null, `user_${req.user.id}_${Date.now()}${ext}`);
+    },
+  });
+
+  // Cấu hình storage cho sản phẩm
+  const productStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, path.join(UPLOAD_DIR, "products")),
+    filename: (_req, _file, cb) => {
+      const uniqueName = Date.now() + "-" + Math.random().toString(36).substring(2, 11);
+      const ext = path.extname(_file.originalname).toLowerCase();
+      cb(null, uniqueName + ext);
+    },
+  });
+
+  // Bộ lọc file: chỉ cho phép ảnh
+  const imageFilter = (_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Chỉ chấp nhận file ảnh (JPG, PNG, GIF, WEBP)"));
+    }
+  };
+
+  const uploadAvatar = multer({ storage: avatarStorage, fileFilter: imageFilter, limits: { fileSize: 10 * 1024 * 1024 } });
+  const uploadProductImage = multer({ storage: productStorage, fileFilter: imageFilter, limits: { fileSize: MAX_FILE_SIZE, files: 5 } });
+
+  // Serve file tĩnh từ thư mục uploads
+  app.use("/uploads", express.static(UPLOAD_DIR));
+
   // JWT Middleware
   const authenticateToken = (req: any, res: any, next: any) => {
     const authHeader = req.headers["authorization"];
@@ -247,7 +392,7 @@ async function startServer() {
         "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
         [name.trim(), email.trim().toLowerCase(), hashedPassword]
       ) as any;
-      const user = { id: result.insertId, name: name.trim(), email: email.trim().toLowerCase(), role: "user" };
+      const user = { id: result.insertId, name: name.trim(), email: email.trim().toLowerCase(), phone: null, role: "user", avatar: null };
       const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
       res.status(201).json({ ...user, token });
     } catch (error) {
@@ -269,30 +414,90 @@ async function startServer() {
   });
 
   // API Routes
+
+  // Cập nhật thông tin cá nhân
+  app.put("/api/auth/profile", authenticateToken, async (req: any, res: any) => {
+    const { phone } = req.body;
+    const userId = req.user.id;
+    try {
+      await db.execute("UPDATE users SET phone = ? WHERE id = ?", [phone || null, userId]);
+      res.json({ success: true, message: "Cập nhật thông tin thành công", phone: phone || null });
+    } catch (error) {
+      res.status(500).json({ error: "Cập nhật thất bại" });
+    }
+  });
+
   app.get("/api/categories", async (req, res) => {
     const [categories] = await db.execute("SELECT * FROM categories");
     res.json(categories);
   });
 
   app.get("/api/products", async (req, res) => {
-    const { category } = req.query;
-    let products;
-    if (category) {
-      [products] = await db.execute(
-        `SELECT p.*, c.name as category_name 
-         FROM products p 
-         JOIN categories c ON p.category_id = c.id 
-         WHERE c.slug = ?`,
-        [category]
-      );
-    } else {
-      [products] = await db.execute(
-        `SELECT p.*, c.name as category_name 
-         FROM products p 
-         JOIN categories c ON p.category_id = c.id`
-      );
+    const { category, search, minPrice, maxPrice, sort, order, page, limit } = req.query;
+
+    // Xây dựng query động
+    let whereClauses: string[] = [];
+    let params: any[] = [];
+
+    // Lọc theo danh mục
+    if (category && typeof category === 'string') {
+      whereClauses.push("c.slug = ?");
+      params.push(category);
     }
-    res.json(products);
+
+    // Tìm kiếm theo tên hoặc mô tả
+    if (search && typeof search === 'string' && search.trim()) {
+      whereClauses.push("(p.name LIKE ? OR p.description LIKE ?)");
+      const keyword = `%${search.trim()}%`;
+      params.push(keyword, keyword);
+    }
+
+    // Lọc theo khoảng giá
+    if (minPrice && !isNaN(Number(minPrice))) {
+      whereClauses.push("p.price >= ?");
+      params.push(Number(minPrice));
+    }
+    if (maxPrice && !isNaN(Number(maxPrice))) {
+      whereClauses.push("p.price <= ?");
+      params.push(Number(maxPrice));
+    }
+
+    const whereSQL = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    // Sắp xếp
+    const allowedSortFields: Record<string, string> = {
+      'price': 'p.price', 'name': 'p.name', 'created_at': 'p.created_at'
+    };
+    const sortField = allowedSortFields[sort as string] || 'p.created_at';
+    const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+
+    // Phân trang
+    const pageNum = Math.max(1, parseInt(page as string) || 1);
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit as string) || 12));
+    const offset = (pageNum - 1) * limitNum;
+
+    // Đếm tổng số sản phẩm (chạy song song với query chính)
+    // LIMIT/OFFSET inline vì MySQL prepared statements không hỗ trợ ? cho LIMIT
+    const countSQL = `SELECT COUNT(*) as total FROM products p JOIN categories c ON p.category_id = c.id ${whereSQL}`;
+    const dataSQL = `SELECT p.*, c.name as category_name FROM products p JOIN categories c ON p.category_id = c.id ${whereSQL} ORDER BY ${sortField} ${sortOrder} LIMIT ${limitNum} OFFSET ${offset}`;
+
+    const [countResult] = await db.execute(countSQL, params) as any;
+    const totalItems = countResult[0].total;
+    const totalPages = Math.ceil(totalItems / limitNum);
+
+    const [products] = await db.execute(dataSQL, params);
+
+    res.json({
+      data: products,
+      pagination: {
+        currentPage: pageNum,
+        itemsPerPage: limitNum,
+        totalPages,
+        totalItems,
+        hasPrev: pageNum > 1,
+        hasNext: pageNum < totalPages
+      }
+    });
   });
 
   app.get("/api/products/:slug", async (req, res) => {
@@ -305,14 +510,14 @@ async function startServer() {
   });
 
   app.post("/api/orders", authenticateToken, async (req, res) => {
-    const { user_id, customer_name, customer_email, items, total_amount } = req.body;
+    const { user_id, customer_name, customer_email, customer_phone, shipping_address, items, total_amount } = req.body;
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
 
       const [orderResult] = await conn.execute(
-        "INSERT INTO orders (user_id, customer_name, customer_email, total_amount) VALUES (?, ?, ?, ?)",
-        [user_id, customer_name, customer_email, total_amount]
+        "INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, shipping_address, total_amount) VALUES (?, ?, ?, ?, ?, ?)",
+        [user_id, customer_name, customer_email, customer_phone || null, shipping_address || null, total_amount]
       ) as any;
 
       const orderId = orderResult.insertId;
@@ -339,6 +544,8 @@ async function startServer() {
       }
 
       await conn.commit();
+      // Ghi lịch sử trạng thái đơn hàng
+      try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'pending', 'Đơn hàng mới tạo')", [orderId]); } catch {}
       res.status(201).json({ id: orderId, message: "Đặt hàng thành công" });
     } catch (error) {
       await conn.rollback();
@@ -418,6 +625,7 @@ async function startServer() {
       "UPDATE orders SET status = 'processing', tracking_code = ?, shipping_provider = ?, shipped_at = NOW() WHERE id = ?",
       [trackingCode, provider, orderId]
     );
+    try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'processing', ?)", [orderId, `Đã xác nhận - Mã vận đơn: ${trackingCode}`]); } catch {}
 
     res.json({ tracking_code: trackingCode, provider, message: "Đã xác nhận & tạo vận đơn thành công" });
   });
@@ -438,6 +646,7 @@ async function startServer() {
     }
 
     await db.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", [orderId]);
+    try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'cancelled', 'Đơn hàng đã bị hủy')", [orderId]); } catch {}
     res.json({ message: "Đã hủy đơn hàng & hoàn trả kho" });
   });
 
@@ -487,7 +696,7 @@ async function startServer() {
   });
 
   app.get("/api/admin/users", authenticateToken, requireAdmin, async (req, res) => {
-    const [users] = await db.execute("SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC");
+    const [users] = await db.execute("SELECT id, name, email, role, avatar, created_at FROM users ORDER BY created_at DESC");
     res.json(users);
   });
 
@@ -503,6 +712,81 @@ async function startServer() {
       res.json({ message: "Đã xóa người dùng" });
     } catch (error) {
       res.status(500).json({ error: "Xóa người dùng thất bại" });
+    }
+  });
+
+  // ============ UPLOAD APIs (Tuần 8) ============
+
+  // Upload avatar (yêu cầu đăng nhập)
+  app.post("/api/upload/avatar", authenticateToken, (req: any, res: any, next: any) => {
+    uploadAvatar.single("avatar")(req, res, (err: any) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "Kích thước file không được vượt quá 2MB" });
+        return res.status(400).json({ error: err.message });
+      }
+      if (err) return res.status(400).json({ error: err.message });
+      next();
+    });
+  }, async (req: any, res: any) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Vui lòng chọn file ảnh để upload" });
+
+      const userId = req.user.id;
+
+      // Xóa avatar cũ nếu có (không xóa file mặc định)
+      const [userRows] = await db.execute("SELECT avatar FROM users WHERE id = ?", [userId]) as any;
+      if (userRows[0]?.avatar) {
+        const oldPath = path.join(__dirname, userRows[0].avatar);
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+
+      // Nén ảnh bằng Sharp
+      const origPath = req.file.path;
+      const optimizedName = `opt_${req.file.filename.replace(path.extname(req.file.filename), '.jpg')}`;
+      const optimizedPath = path.join(UPLOAD_DIR, 'avatars', optimizedName);
+      await sharp(origPath)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toFile(optimizedPath);
+      fs.unlinkSync(origPath);
+
+      const avatarPath = `/uploads/avatars/${optimizedName}`;
+      await db.execute("UPDATE users SET avatar = ? WHERE id = ?", [avatarPath, userId]);
+
+      res.json({ success: true, message: "Cập nhật ảnh đại diện thành công", avatar: avatarPath });
+    } catch (error) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      res.status(500).json({ error: "Lỗi server khi upload avatar" });
+    }
+  });
+
+  // Upload ảnh sản phẩm (admin only)
+  app.post("/api/upload/product", authenticateToken, requireAdmin, (req: any, res: any, next: any) => {
+    uploadProductImage.single("image")(req, res, (err: any) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "Kích thước file không được vượt quá 5MB" });
+        return res.status(400).json({ error: err.message });
+      }
+      if (err) return res.status(400).json({ error: err.message });
+      next();
+    });
+  }, async (req: any, res: any) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Vui lòng chọn file ảnh" });
+      // Nén ảnh sản phẩm bằng Sharp
+      const origPath = req.file.path;
+      const optimizedName = `opt_${req.file.filename.replace(path.extname(req.file.filename), '.jpg')}`;
+      const optimizedPath = path.join(UPLOAD_DIR, 'products', optimizedName);
+      await sharp(origPath)
+        .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toFile(optimizedPath);
+      fs.unlinkSync(origPath);
+      const imagePath = `/uploads/products/${optimizedName}`;
+      res.json({ success: true, message: "Upload ảnh sản phẩm thành công", image_url: imagePath });
+    } catch (error) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      res.status(500).json({ error: "Lỗi server khi upload ảnh sản phẩm" });
     }
   });
 
@@ -587,6 +871,7 @@ async function startServer() {
 
           for (const order of rows) {
             await db.execute("UPDATE orders SET status = ? WHERE id = ?", [next, order.id]);
+            try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)", [order.id, next, `Tự động chuyển: ${fromStatus} → ${next}`]); } catch {}
             console.log(`📦 Demo: Đơn #${order.id}: ${fromStatus} → ${next}`);
           }
         }
@@ -648,6 +933,7 @@ async function startServer() {
                   "UPDATE orders SET status = ? WHERE id = ?",
                   [newStatus, order.id]
                 );
+                try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)", [order.id, newStatus, `GHN: ${ghnStatus} → ${newStatus}`]); } catch {}
                 console.log(`🚚 GHN: Đơn #${order.id} (${order.tracking_code}): ${order.status} → ${newStatus} (GHN: ${ghnStatus})`);
               }
             }
