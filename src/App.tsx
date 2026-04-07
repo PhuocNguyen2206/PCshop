@@ -51,7 +51,7 @@ const AppContent = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white font-sans">
+    <div className="min-h-screen bg-white font-sans flex flex-col">
       <Navbar 
         onAdminToggle={handleAdminToggle}
         isAdmin={view === 'admin'}
@@ -61,7 +61,7 @@ const AppContent = () => {
         onViewProfile={handleViewProfile}
       />
 
-      <main>
+      <main className="flex-1">
         <AnimatePresence mode="wait">
           {view === 'store' && (
             <motion.div key="store" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
@@ -117,17 +117,17 @@ const AppContent = () => {
               <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Sản phẩm</h4>
               <div className="space-y-2.5">
                 <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Linh kiện PC</button>
-                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Khuyến mãi</button>
-                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Mới nhất</button>
+                <span className="block text-sm text-slate-600 cursor-default">Khuyến mãi</span>
+                <span className="block text-sm text-slate-600 cursor-default">Mới nhất</span>
               </div>
             </div>
 
             <div>
               <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Hỗ trợ</h4>
               <div className="space-y-2.5">
-                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Liên hệ</button>
-                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">Chính sách</button>
-                <button onClick={handleBackToStore} className="block text-sm text-slate-500 hover:text-indigo-400 transition-colors">FAQ</button>
+                <span className="block text-sm text-slate-600 cursor-default">Liên hệ</span>
+                <span className="block text-sm text-slate-600 cursor-default">Chính sách</span>
+                <span className="block text-sm text-slate-600 cursor-default">FAQ</span>
               </div>
             </div>
           </div>

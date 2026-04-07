@@ -33,6 +33,7 @@ export const OrderHistory = () => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [trackingData, setTrackingData] = useState<Record<number, TrackingData>>({});
   const [orderItems, setOrderItems] = useState<Record<number, any[]>>({});
+  const [loadingDetail, setLoadingDetail] = useState<Record<number, boolean>>({});
   const { authHeaders } = useAuth();
 
   useEffect(() => {
@@ -68,21 +69,28 @@ export const OrderHistory = () => {
       return;
     }
     setExpandedId(orderId);
+    setLoadingDetail(prev => ({ ...prev, [orderId]: true }));
 
     // Fetch tracking + items
     const headers = authHeaders();
+    const promises: Promise<void>[] = [];
     if (!trackingData[orderId]) {
-      fetch(`/api/orders/${orderId}/tracking`, { headers })
-        .then(res => res.json())
-        .then(t => setTrackingData(prev => ({ ...prev, [orderId]: t })))
-        .catch(() => {});
+      promises.push(
+        fetch(`/api/orders/${orderId}/tracking`, { headers })
+          .then(res => res.json())
+          .then(t => setTrackingData(prev => ({ ...prev, [orderId]: t })))
+          .catch(() => {})
+      );
     }
     if (!orderItems[orderId]) {
-      fetch(`/api/orders/${orderId}/items`, { headers })
-        .then(res => res.json())
-        .then(items => setOrderItems(prev => ({ ...prev, [orderId]: items })))
-        .catch(() => {});
+      promises.push(
+        fetch(`/api/orders/${orderId}/items`, { headers })
+          .then(res => res.json())
+          .then(items => setOrderItems(prev => ({ ...prev, [orderId]: items })))
+          .catch(() => {})
+      );
     }
+    Promise.all(promises).finally(() => setLoadingDetail(prev => ({ ...prev, [orderId]: false })));
   };
 
   if (loading) return (
@@ -157,6 +165,12 @@ export const OrderHistory = () => {
                     className="overflow-hidden"
                   >
                     <div className="px-6 pb-6 border-t border-slate-100 pt-5 space-y-6">
+                      {loadingDetail[order.id] ? (
+                        <div className="flex items-center justify-center py-8 gap-3">
+                          <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                          <span className="text-sm text-slate-400">Đang tải...</span>
+                        </div>
+                      ) : (<>
                       {/* Timeline */}
                       {tracking?.timeline && (
                         <div>
@@ -238,6 +252,7 @@ export const OrderHistory = () => {
                         <span>Ngày đặt: {new Date(order.created_at).toLocaleDateString('vi-VN')}</span>
                         {order.tracking_code && <span>Mã vận đơn: <span className="font-mono text-slate-600">{order.tracking_code}</span></span>}
                       </div>
+                      </>)}
                     </div>
                   </motion.div>
                 )}

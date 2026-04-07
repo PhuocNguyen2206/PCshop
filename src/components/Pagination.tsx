@@ -53,11 +53,6 @@ export const Pagination = ({ pagination, onPageChange }: PaginationProps) => {
 
   return (
     <div className="flex flex-col items-center gap-4 mt-12">
-      {/* Info */}
-      <p className="text-sm text-slate-500">
-        Hiển thị trang <span className="font-semibold text-slate-700">{currentPage}</span> / {totalPages} — Tổng <span className="font-semibold text-slate-700">{totalItems}</span> sản phẩm
-      </p>
-
       {/* Buttons */}
       <div className="flex items-center gap-1.5">
         <button

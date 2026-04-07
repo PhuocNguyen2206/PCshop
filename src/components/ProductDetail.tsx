@@ -13,6 +13,7 @@ export const ProductDetail = ({ slug, onBack, onAuthOpen }: { slug: string, onBa
   const { isAuthenticated } = useAuth();
 
   useEffect(() => {
+    setAdded(false);
     setLoading(true);
     fetch(`/api/products/${slug}`)
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })

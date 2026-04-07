@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Package, ShoppingBag, User as UserIcon, Plus, Edit2, Trash2, X, ChevronDown, DollarSign, TrendingUp, Truck, Check, Ban, Cpu } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingBag, User as UserIcon, Plus, Edit2, Trash2, X, ChevronDown, DollarSign, TrendingUp, Truck, Check, Ban, Cpu, FolderOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, Category, Order, User } from '../types';
 import { useAuth } from '../AuthContext';
@@ -69,18 +69,19 @@ export const AdminDashboard = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'users'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'users' | 'categories'>('overview');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const { authHeaders } = useAuth();
   const { toast, confirm } = useToast();
 
   useEffect(() => {
     const headers = authHeaders();
-    fetch('/api/admin/stats', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setStats).catch(() => {});
-    fetch('/api/admin/orders', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setOrders).catch(() => {});
-    fetch('/api/products?limit=1000').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(r => setProducts(r.data || r)).catch(() => {});
-    fetch('/api/categories').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setCategories).catch(() => {});
-    fetch('/api/admin/users', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setUsers).catch(() => {});
+    fetch('/api/admin/stats', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setStats).catch(() => toast.error('Không tải được thống kê'));
+    fetch('/api/admin/orders', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setOrders).catch(() => toast.error('Không tải được đơn hàng'));
+    fetch('/api/products?limit=1000').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(r => setProducts(r.data || r)).catch(() => toast.error('Không tải được sản phẩm'));
+    fetch('/api/categories').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setCategories).catch(() => toast.error('Không tải được danh mục'));
+    fetch('/api/admin/users', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setUsers).catch(() => toast.error('Không tải được người dùng'));
   }, []);
 
   // Auto-refresh đơn hàng mỗi 8 giây (để thấy trạng thái tự động chuyển trong demo mode)
@@ -186,6 +187,50 @@ export const AdminDashboard = () => {
     }
   };
 
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCategory) return;
+    const isNew = !editingCategory.id;
+    const url = isNew ? '/api/admin/categories' : `/api/admin/categories/${editingCategory.id}`;
+    const method = isNew ? 'POST' : 'PUT';
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(editingCategory)
+      });
+      if (res.ok) {
+        if (isNew) {
+          const data = await res.json();
+          setCategories(prev => [...prev, { ...editingCategory, id: data.id }]);
+        } else {
+          setCategories(prev => prev.map(c => c.id === editingCategory.id ? editingCategory : c));
+        }
+        setEditingCategory(null);
+        toast.success(isNew ? 'Thêm danh mục thành công!' : 'Cập nhật danh mục thành công!');
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Thao tác thất bại');
+      }
+    } catch {
+      toast.error('Lỗi kết nối server');
+    }
+  };
+
+  const handleDeleteCategory = async (id: number) => {
+    const ok = await confirm({ title: 'Xóa danh mục', message: 'Bạn có chắc chắn muốn xóa danh mục này? Chỉ xóa được nếu danh mục không chứa sản phẩm nào.', type: 'danger', confirmText: 'Xóa' });
+    if (ok) {
+      const res = await fetch(`/api/admin/categories/${id}`, { method: 'DELETE', headers: authHeaders() });
+      if (res.ok) {
+        setCategories(prev => prev.filter(c => c.id !== id));
+        toast.success('Đã xóa danh mục');
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Không thể xóa danh mục');
+      }
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       {/* Admin Header */}
@@ -205,6 +250,7 @@ export const AdminDashboard = () => {
           {[
             { key: 'overview', icon: LayoutDashboard, label: 'Tổng quan' },
             { key: 'products', icon: Package, label: 'Sản phẩm' },
+            { key: 'categories', icon: FolderOpen, label: 'Danh mục' },
             { key: 'orders', icon: ShoppingBag, label: 'Đơn hàng' },
             { key: 'users', icon: UserIcon, label: 'Khách hàng' },
           ].map(tab => (
@@ -469,6 +515,73 @@ export const AdminDashboard = () => {
               </div>
             </div>
           )}
+
+          {activeTab === 'categories' && (
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="font-bold text-slate-900">Quản lý danh mục</h3>
+                <button 
+                  onClick={() => setEditingCategory({ id: 0, name: '', slug: '' })}
+                  className="px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" /> Thêm danh mục
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500 font-medium">
+                    <tr>
+                      <th className="px-6 py-4">ID</th>
+                      <th className="px-6 py-4">Tên danh mục</th>
+                      <th className="px-6 py-4">Slug</th>
+                      <th className="px-6 py-4">Số sản phẩm</th>
+                      <th className="px-6 py-4">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {categories.map(cat => {
+                      const productCount = products.filter(p => p.category_id === cat.id).length;
+                      return (
+                        <tr key={cat.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-6 py-4 font-mono text-xs text-slate-500">#{cat.id}</td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center">
+                                <FolderOpen className="w-4 h-4 text-indigo-500" />
+                              </div>
+                              <span className="font-medium text-slate-900">{cat.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="font-mono text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{cat.slug}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-sm text-slate-600">{productCount} sản phẩm</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => setEditingCategory(cat)}
+                                className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteCategory(cat.id)}
+                                className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -487,13 +600,13 @@ export const AdminDashboard = () => {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg bg-white rounded-3xl shadow-2xl z-[90] overflow-hidden"
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg max-h-[90vh] bg-white rounded-3xl shadow-2xl z-[90] flex flex-col overflow-hidden"
             >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center shrink-0">
                 <h3 className="font-bold text-slate-900">{editingProduct.id ? 'Chỉnh sửa sản phẩm' : 'Thêm sản phẩm mới'}</h3>
                 <button onClick={() => setEditingProduct(null)} className="p-2 hover:bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
               </div>
-              <form onSubmit={handleSaveProduct} className="p-6 space-y-4">
+              <form onSubmit={handleSaveProduct} className="p-6 space-y-4 overflow-y-auto">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase">Tên sản phẩm</label>
@@ -587,6 +700,68 @@ export const AdminDashboard = () => {
                     className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
                   >
                     {editingProduct.id ? 'Lưu thay đổi' : 'Thêm sản phẩm'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Category Modal */}
+      <AnimatePresence>
+        {editingCategory && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingCategory(null)}
+              className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[80]"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-3xl shadow-2xl z-[90] overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="font-bold text-slate-900">{editingCategory.id ? 'Chỉnh sửa danh mục' : 'Thêm danh mục mới'}</h3>
+                <button onClick={() => setEditingCategory(null)} className="p-2 hover:bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
+              </div>
+              <form onSubmit={handleSaveCategory} className="p-6 space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Tên danh mục</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all"
+                    value={editingCategory.name}
+                    onChange={e => {
+                      const name = e.target.value;
+                      const slug = editingCategory.id ? editingCategory.slug : name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                      setEditingCategory({ ...editingCategory, name, slug });
+                    }}
+                    placeholder="VD: Card đồ họa"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Slug (URL)</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all"
+                    value={editingCategory.slug}
+                    onChange={e => setEditingCategory({ ...editingCategory, slug: e.target.value })}
+                    placeholder="VD: card-do-hoa"
+                    required
+                  />
+                </div>
+                <div className="pt-4">
+                  <button 
+                    type="submit"
+                    className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+                  >
+                    {editingCategory.id ? 'Lưu thay đổi' : 'Thêm danh mục'}
                   </button>
                 </div>
               </form>

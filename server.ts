@@ -792,6 +792,50 @@ async function startServer() {
 
   // ============ UPLOAD APIs (Tuần 8) ============
 
+  // ============ ADMIN CATEGORIES ============
+  app.post("/api/admin/categories", authenticateToken, requireAdmin, async (req, res) => {
+    const { name, slug } = req.body;
+    if (!name || !slug) return res.status(400).json({ error: "Tên và slug là bắt buộc" });
+    try {
+      const [result] = await db.execute(
+        "INSERT INTO categories (name, slug) VALUES (?, ?)",
+        [name.trim(), slug.trim().toLowerCase()]
+      ) as any;
+      res.status(201).json({ id: result.insertId, name: name.trim(), slug: slug.trim().toLowerCase() });
+    } catch (error) {
+      res.status(400).json({ error: "Slug đã tồn tại" });
+    }
+  });
+
+  app.put("/api/admin/categories/:id", authenticateToken, requireAdmin, async (req, res) => {
+    const { name, slug } = req.body;
+    if (!name || !slug) return res.status(400).json({ error: "Tên và slug là bắt buộc" });
+    try {
+      await db.execute(
+        "UPDATE categories SET name = ?, slug = ? WHERE id = ?",
+        [name.trim(), slug.trim().toLowerCase(), req.params.id]
+      );
+      res.json({ message: "Cập nhật danh mục thành công" });
+    } catch (error) {
+      res.status(400).json({ error: "Slug đã tồn tại" });
+    }
+  });
+
+  app.delete("/api/admin/categories/:id", authenticateToken, requireAdmin, async (req, res) => {
+    const [products] = await db.execute("SELECT COUNT(*) as count FROM products WHERE category_id = ?", [req.params.id]) as any;
+    if (products[0].count > 0) {
+      return res.status(400).json({ error: `Không thể xóa: danh mục đang chứa ${products[0].count} sản phẩm` });
+    }
+    try {
+      await db.execute("DELETE FROM categories WHERE id = ?", [req.params.id]);
+      res.json({ message: "Đã xóa danh mục" });
+    } catch (error) {
+      res.status(500).json({ error: "Xóa danh mục thất bại" });
+    }
+  });
+
+  // ============ UPLOAD APIs (Tuần 8) ============
+
   // Upload avatar (yêu cầu đăng nhập)
   app.post("/api/upload/avatar", authenticateToken, (req: express.Request, res: express.Response, next: express.NextFunction) => {
     uploadAvatar.single("avatar")(req, res, (err: any) => {

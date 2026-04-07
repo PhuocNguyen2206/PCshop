@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Package, Sparkles, ShoppingCart, Zap, Shield, Truck, Monitor, Cpu, HardDrive, Star, Search, SlidersHorizontal, X } from 'lucide-react';
+import { Plus, Package, Sparkles, ShoppingCart, Zap, Shield, Truck, Monitor, Cpu, HardDrive, Star, Search, SlidersHorizontal, X, ChevronDown, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../CartContext';
 import { useAuth } from '../AuthContext';
@@ -39,6 +39,7 @@ export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slu
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPriceRange, setSelectedPriceRange] = useState(0);
   const [selectedSort, setSelectedSort] = useState(0);
+  const [sortOpen, setSortOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -271,17 +272,42 @@ export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slu
             )}
           </button>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">Sắp xếp:</span>
-            <select
-              value={selectedSort}
-              onChange={(e) => setSelectedSort(Number(e.target.value))}
-              className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 cursor-pointer"
+          <div className="relative">
+            <button
+              onClick={() => setSortOpen(!sortOpen)}
+              onBlur={() => setTimeout(() => setSortOpen(false), 150)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 hover:border-slate-300 transition-all cursor-pointer"
             >
-              {SORT_OPTIONS.map((opt, i) => (
-                <option key={i} value={i}>{opt.label}</option>
-              ))}
-            </select>
+              <span className="text-slate-400">Sắp xếp:</span>
+              <span className="font-medium text-slate-700">{SORT_OPTIONS[selectedSort].label}</span>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${sortOpen ? 'rotate-180' : ''}`} />
+            </button>
+            <AnimatePresence>
+              {sortOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute right-0 top-full mt-2 w-44 bg-white border border-slate-100 rounded-2xl shadow-xl shadow-slate-200/50 py-1.5 z-50 overflow-hidden"
+                >
+                  {SORT_OPTIONS.map((opt, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setSelectedSort(i); setSortOpen(false); }}
+                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center justify-between transition-colors ${
+                        selectedSort === i
+                          ? 'bg-indigo-50 text-indigo-600 font-semibold'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {opt.label}
+                      {selectedSort === i && <Check className="w-4 h-4 text-indigo-500" />}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
@@ -379,9 +405,9 @@ export const UserStore = ({ onProductClick, onAuthOpen }: { onProductClick: (slu
               </motion.div>
             ) : (
               <motion.div 
-                key={selectedCategory || 'all'}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
+                key={`${selectedCategory || 'all'}-page${currentPage}`}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
                 className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
