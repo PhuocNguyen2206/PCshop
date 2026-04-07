@@ -35,6 +35,9 @@ DB_HOST=localhost
 DB_USER=root
 DB_PASSWORD=mat_khau_mysql_cua_ban
 DB_NAME=pcmaster
+JWT_SECRET=mot_chuoi_bi_mat_rat_dai
+ADMIN_EMAIL=admin@pcmaster.local
+ADMIN_PASSWORD=mat_khau_admin_it_nhat_8_ky_tu
 ```
 
 ### 4. Chạy dự án
@@ -47,10 +50,11 @@ Server sẽ chạy tại: **http://localhost:3000**
 
 > Database và dữ liệu mẫu sẽ được tự động tạo khi chạy lần đầu.
 
-## Tài khoản Admin mặc định
+## Tài khoản Admin
 
-- **Email:** admin@pcmaster.com  
-- **Mật khẩu:** admin123
+Tài khoản admin đầu tiên được tạo từ biến môi trường `ADMIN_EMAIL` và `ADMIN_PASSWORD`.
+
+Nếu bạn không khai báo `ADMIN_PASSWORD`, server sẽ tự sinh mật khẩu tạm và in ra terminal khi khởi động.
 
 ## Công nghệ sử dụng
 

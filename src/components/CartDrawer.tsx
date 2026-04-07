@@ -32,13 +32,11 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
-          user_id: user?.id,
           customer_name: customerInfo.name,
           customer_email: customerInfo.email,
           customer_phone: customerInfo.phone,
           shipping_address: customerInfo.address,
           items,
-          total_amount: total,
         }),
       });
       if (res.ok) {

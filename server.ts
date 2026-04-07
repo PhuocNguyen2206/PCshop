@@ -9,11 +9,24 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import sharp from "sharp";
+import { randomBytes } from "crypto";
 
 dotenv.config({ path: ".env.local" });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+interface JwtUserPayload {
+  id: number;
+  email: string;
+  role: string;
+  iat?: number;
+  exp?: number;
+}
+
+interface AuthenticatedRequest extends express.Request {
+  user: JwtUserPayload;
+}
 
 // ============ CẤU HÌNH MySQL ============
 // Cấu hình trong file .env.local:
@@ -21,9 +34,15 @@ const __dirname = path.dirname(__filename);
 //   DB_USER=root
 //   DB_PASSWORD=matkhau
 //   DB_NAME=pcmaster
-const JWT_SECRET = process.env.JWT_SECRET || "pcmaster_default_dev_key";
+const JWT_SECRET = process.env.JWT_SECRET?.trim() || randomBytes(32).toString("hex");
 if (!process.env.JWT_SECRET) {
-  console.warn("⚠️  CẢNH BÁO: JWT_SECRET chưa được cấu hình trong .env.local — đang dùng key mặc định (chỉ dùng cho dev)!");
+  console.warn("⚠️  CẢNH BÁO: JWT_SECRET chưa được cấu hình trong .env.local — đang tạo key tạm thời cho phiên chạy hiện tại.");
+}
+
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase() || "admin@pcmaster.local";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || randomBytes(9).toString("base64url");
+if (!process.env.ADMIN_PASSWORD) {
+  console.warn(`⚠️  CẢNH BÁO: ADMIN_PASSWORD chưa được cấu hình. Mật khẩu admin tạm thời cho phiên này: ${ADMIN_PASSWORD}`);
 }
 
 // ============ CẤU HÌNH GHN / DEMO MODE ============
@@ -278,10 +297,10 @@ async function initDatabase() {
 
   const [userRows] = await pool.execute("SELECT COUNT(*) as count FROM users") as any;
   if (userRows[0].count === 0) {
-    const hashedPassword = await bcrypt.hash("admin123", 10);
+    const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
     await pool.execute(
       "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-      ["Admin", "admin@pcmaster.vn", hashedPassword, "admin"]
+      ["Admin", ADMIN_EMAIL, hashedPassword, "admin"]
     );
   } else {
     // Migrate plain-text passwords to bcrypt (for existing databases)
@@ -353,21 +372,21 @@ async function startServer() {
   app.use("/uploads", express.static(UPLOAD_DIR));
 
   // JWT Middleware
-  const authenticateToken = (req: any, res: any, next: any) => {
+  const authenticateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const authHeader = req.headers["authorization"];
     const token = authHeader && authHeader.split(" ")[1];
     if (!token) return res.status(401).json({ error: "Chưa đăng nhập" });
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded;
+      const decoded = jwt.verify(token, JWT_SECRET) as JwtUserPayload;
+      (req as AuthenticatedRequest).user = decoded;
       next();
     } catch {
       return res.status(403).json({ error: "Token không hợp lệ hoặc hết hạn" });
     }
   };
 
-  const requireAdmin = (req: any, res: any, next: any) => {
-    if (req.user?.role !== "admin") {
+  const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if ((req as AuthenticatedRequest).user?.role !== "admin") {
       return res.status(403).json({ error: "Không có quyền truy cập" });
     }
     next();
@@ -383,8 +402,8 @@ async function startServer() {
     if (!email || typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ error: "Email không hợp lệ" });
     }
-    if (!password || typeof password !== "string" || password.length < 6) {
-      return res.status(400).json({ error: "Mật khẩu phải có ít nhất 6 ký tự" });
+    if (!password || typeof password !== "string" || password.length < 8) {
+      return res.status(400).json({ error: "Mật khẩu phải có ít nhất 8 ký tự" });
     }
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -396,13 +415,16 @@ async function startServer() {
       const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
       res.status(201).json({ ...user, token });
     } catch (error) {
-      res.status(400).json({ error: "Email đã tồn tại" });
+      res.status(400).json({ error: "Đăng ký thất bại. Vui lòng kiểm tra lại thông tin." });
     }
   });
 
   app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
-    const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email]) as any;
+    if (typeof email !== "string" || typeof password !== "string") {
+      return res.status(400).json({ error: "Thông tin đăng nhập không hợp lệ" });
+    }
+    const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email.trim().toLowerCase()]) as any;
     const user = rows[0];
     if (user && await bcrypt.compare(password, user.password)) {
       const { password: _, ...userWithoutPassword } = user;
@@ -416,12 +438,16 @@ async function startServer() {
   // API Routes
 
   // Cập nhật thông tin cá nhân
-  app.put("/api/auth/profile", authenticateToken, async (req: any, res: any) => {
+  app.put("/api/auth/profile", authenticateToken, async (req: express.Request, res: express.Response) => {
     const { phone } = req.body;
-    const userId = req.user.id;
+    const userId = (req as AuthenticatedRequest).user.id;
+    if (phone !== undefined && phone !== null && typeof phone !== "string") {
+      return res.status(400).json({ error: "Số điện thoại không hợp lệ" });
+    }
     try {
-      await db.execute("UPDATE users SET phone = ? WHERE id = ?", [phone || null, userId]);
-      res.json({ success: true, message: "Cập nhật thông tin thành công", phone: phone || null });
+      const normalizedPhone = typeof phone === "string" ? phone.trim() : "";
+      await db.execute("UPDATE users SET phone = ? WHERE id = ?", [normalizedPhone || null, userId]);
+      res.json({ success: true, message: "Cập nhật thông tin thành công", phone: normalizedPhone || null });
     } catch (error) {
       res.status(500).json({ error: "Cập nhật thất bại" });
     }
@@ -509,30 +535,78 @@ async function startServer() {
     }
   });
 
-  app.post("/api/orders", authenticateToken, async (req, res) => {
-    const { user_id, customer_name, customer_email, customer_phone, shipping_address, items, total_amount } = req.body;
+  app.post("/api/orders", authenticateToken, async (req: express.Request, res: express.Response) => {
+    const { customer_name, customer_email, customer_phone, shipping_address, items } = req.body;
+    const authenticatedUser = (req as AuthenticatedRequest).user;
+
+    if (!customer_name || typeof customer_name !== "string" || customer_name.trim().length < 2) {
+      return res.status(400).json({ error: "Họ tên phải có ít nhất 2 ký tự" });
+    }
+    if (!customer_email || typeof customer_email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer_email.trim())) {
+      return res.status(400).json({ error: "Email nhận hàng không hợp lệ" });
+    }
+    if (!customer_phone || typeof customer_phone !== "string" || customer_phone.trim().length < 8) {
+      return res.status(400).json({ error: "Số điện thoại không hợp lệ" });
+    }
+    if (!shipping_address || typeof shipping_address !== "string" || shipping_address.trim().length < 5) {
+      return res.status(400).json({ error: "Địa chỉ giao hàng không hợp lệ" });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "Giỏ hàng đang trống" });
+    }
+
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
 
+      let computedTotal = 0;
+      const normalizedItems: Array<{ id: number; quantity: number; price: number; name: string }> = [];
+
+      for (const item of items) {
+        if (!item || !Number.isInteger(item.id) || !Number.isInteger(item.quantity) || item.quantity <= 0) {
+          await conn.rollback();
+          return res.status(400).json({ error: "Dữ liệu sản phẩm trong đơn hàng không hợp lệ" });
+        }
+
+        const [productRows] = await conn.execute(
+          "SELECT id, name, price, stock FROM products WHERE id = ? FOR UPDATE",
+          [item.id]
+        ) as any;
+
+        const product = productRows[0];
+        if (!product) {
+          await conn.rollback();
+          return res.status(400).json({ error: `Sản phẩm #${item.id} không tồn tại` });
+        }
+        if (product.stock < item.quantity) {
+          await conn.rollback();
+          return res.status(400).json({ error: `Sản phẩm "${product.name}" không đủ hàng trong kho` });
+        }
+
+        normalizedItems.push({
+          id: product.id,
+          quantity: item.quantity,
+          price: product.price,
+          name: product.name,
+        });
+        computedTotal += product.price * item.quantity;
+      }
+
       const [orderResult] = await conn.execute(
         "INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, shipping_address, total_amount) VALUES (?, ?, ?, ?, ?, ?)",
-        [user_id, customer_name, customer_email, customer_phone || null, shipping_address || null, total_amount]
+        [
+          authenticatedUser.id,
+          customer_name.trim(),
+          customer_email.trim().toLowerCase(),
+          customer_phone.trim(),
+          shipping_address.trim(),
+          computedTotal,
+        ]
       ) as any;
 
       const orderId = orderResult.insertId;
 
-      for (const item of items) {
-        // Kiểm tra stock đủ hàng
-        const [stockRows] = await conn.execute(
-          "SELECT stock FROM products WHERE id = ? FOR UPDATE",
-          [item.id]
-        ) as any;
-        if (!stockRows[0] || stockRows[0].stock < item.quantity) {
-          await conn.rollback();
-          conn.release();
-          return res.status(400).json({ error: `Sản phẩm "${item.name || item.id}" không đủ hàng trong kho` });
-        }
+      for (const item of normalizedItems) {
         await conn.execute(
           "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
           [orderId, item.id, item.quantity, item.price]
@@ -546,9 +620,10 @@ async function startServer() {
       await conn.commit();
       // Ghi lịch sử trạng thái đơn hàng
       try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'pending', 'Đơn hàng mới tạo')", [orderId]); } catch {}
-      res.status(201).json({ id: orderId, message: "Đặt hàng thành công" });
+      res.status(201).json({ id: orderId, total_amount: computedTotal, message: "Đặt hàng thành công" });
     } catch (error) {
       await conn.rollback();
+      console.error("Order creation failed:", error);
       res.status(500).json({ error: "Đặt hàng thất bại" });
     } finally {
       conn.release();
@@ -718,7 +793,7 @@ async function startServer() {
   // ============ UPLOAD APIs (Tuần 8) ============
 
   // Upload avatar (yêu cầu đăng nhập)
-  app.post("/api/upload/avatar", authenticateToken, (req: any, res: any, next: any) => {
+  app.post("/api/upload/avatar", authenticateToken, (req: express.Request, res: express.Response, next: express.NextFunction) => {
     uploadAvatar.single("avatar")(req, res, (err: any) => {
       if (err instanceof multer.MulterError) {
         if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "Kích thước file không được vượt quá 2MB" });
@@ -727,11 +802,12 @@ async function startServer() {
       if (err) return res.status(400).json({ error: err.message });
       next();
     });
-  }, async (req: any, res: any) => {
+  }, async (req: express.Request, res: express.Response) => {
     try {
-      if (!req.file) return res.status(400).json({ error: "Vui lòng chọn file ảnh để upload" });
+      const uploadRequest = req as express.Request & { file?: Express.Multer.File };
+      if (!uploadRequest.file) return res.status(400).json({ error: "Vui lòng chọn file ảnh để upload" });
 
-      const userId = req.user.id;
+      const userId = (req as AuthenticatedRequest).user.id;
 
       // Xóa avatar cũ nếu có (không xóa file mặc định)
       const [userRows] = await db.execute("SELECT avatar FROM users WHERE id = ?", [userId]) as any;
@@ -741,8 +817,8 @@ async function startServer() {
       }
 
       // Nén ảnh bằng Sharp
-      const origPath = req.file.path;
-      const optimizedName = `opt_${req.file.filename.replace(path.extname(req.file.filename), '.jpg')}`;
+      const origPath = uploadRequest.file.path;
+      const optimizedName = `opt_${uploadRequest.file.filename.replace(path.extname(uploadRequest.file.filename), '.jpg')}`;
       const optimizedPath = path.join(UPLOAD_DIR, 'avatars', optimizedName);
       await sharp(origPath)
         .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
@@ -755,13 +831,14 @@ async function startServer() {
 
       res.json({ success: true, message: "Cập nhật ảnh đại diện thành công", avatar: avatarPath });
     } catch (error) {
-      if (req.file) fs.unlinkSync(req.file.path);
+      const uploadRequest = req as express.Request & { file?: Express.Multer.File };
+      if (uploadRequest.file && fs.existsSync(uploadRequest.file.path)) fs.unlinkSync(uploadRequest.file.path);
       res.status(500).json({ error: "Lỗi server khi upload avatar" });
     }
   });
 
   // Upload ảnh sản phẩm (admin only)
-  app.post("/api/upload/product", authenticateToken, requireAdmin, (req: any, res: any, next: any) => {
+  app.post("/api/upload/product", authenticateToken, requireAdmin, (req: express.Request, res: express.Response, next: express.NextFunction) => {
     uploadProductImage.single("image")(req, res, (err: any) => {
       if (err instanceof multer.MulterError) {
         if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "Kích thước file không được vượt quá 5MB" });
@@ -770,12 +847,13 @@ async function startServer() {
       if (err) return res.status(400).json({ error: err.message });
       next();
     });
-  }, async (req: any, res: any) => {
+  }, async (req: express.Request, res: express.Response) => {
     try {
-      if (!req.file) return res.status(400).json({ error: "Vui lòng chọn file ảnh" });
+      const uploadRequest = req as express.Request & { file?: Express.Multer.File };
+      if (!uploadRequest.file) return res.status(400).json({ error: "Vui lòng chọn file ảnh" });
       // Nén ảnh sản phẩm bằng Sharp
-      const origPath = req.file.path;
-      const optimizedName = `opt_${req.file.filename.replace(path.extname(req.file.filename), '.jpg')}`;
+      const origPath = uploadRequest.file.path;
+      const optimizedName = `opt_${uploadRequest.file.filename.replace(path.extname(uploadRequest.file.filename), '.jpg')}`;
       const optimizedPath = path.join(UPLOAD_DIR, 'products', optimizedName);
       await sharp(origPath)
         .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
@@ -785,7 +863,8 @@ async function startServer() {
       const imagePath = `/uploads/products/${optimizedName}`;
       res.json({ success: true, message: "Upload ảnh sản phẩm thành công", image_url: imagePath });
     } catch (error) {
-      if (req.file) fs.unlinkSync(req.file.path);
+      const uploadRequest = req as express.Request & { file?: Express.Multer.File };
+      if (uploadRequest.file && fs.existsSync(uploadRequest.file.path)) fs.unlinkSync(uploadRequest.file.path);
       res.status(500).json({ error: "Lỗi server khi upload ảnh sản phẩm" });
     }
   });
@@ -793,19 +872,19 @@ async function startServer() {
   // ============ SHIPPING / TRACKING APIS ============
 
   // User: xem đơn hàng của mình
-  app.get("/api/orders/my", authenticateToken, async (req, res) => {
+  app.get("/api/orders/my", authenticateToken, async (req: express.Request, res: express.Response) => {
     const [orders] = await db.execute(
       "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
-      [req.user.id]
+      [(req as AuthenticatedRequest).user.id]
     );
     res.json(orders);
   });
 
   // User: xem chi tiết tracking
-  app.get("/api/orders/:id/tracking", authenticateToken, async (req, res) => {
+  app.get("/api/orders/:id/tracking", authenticateToken, async (req: express.Request, res: express.Response) => {
     const [rows] = await db.execute(
       "SELECT id, status, tracking_code, shipping_provider, shipped_at, created_at FROM orders WHERE id = ? AND user_id = ?",
-      [req.params.id, req.user.id]
+      [req.params.id, (req as AuthenticatedRequest).user.id]
     ) as any;
     if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
 
@@ -839,8 +918,8 @@ async function startServer() {
   });
 
   // User: xem items của đơn hàng
-  app.get("/api/orders/:id/items", authenticateToken, async (req, res) => {
-    const [orderCheck] = await db.execute("SELECT id FROM orders WHERE id = ? AND user_id = ?", [req.params.id, req.user.id]) as any;
+  app.get("/api/orders/:id/items", authenticateToken, async (req: express.Request, res: express.Response) => {
+    const [orderCheck] = await db.execute("SELECT id FROM orders WHERE id = ? AND user_id = ?", [req.params.id, (req as AuthenticatedRequest).user.id]) as any;
     if (!orderCheck[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
     const [items] = await db.execute(
       `SELECT oi.*, p.name as product_name, p.image_url 
