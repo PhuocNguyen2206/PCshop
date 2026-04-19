@@ -33,6 +33,8 @@ export interface Order {
   customer_phone?: string | null;
   shipping_address?: string | null;
   total_amount: number;
+  prepaid_amount?: number;
+  payment_status?: 'paid' | 'unpaid';
   status: string;
   tracking_code: string | null;
   shipping_provider: string | null;

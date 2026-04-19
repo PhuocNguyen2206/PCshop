@@ -40,15 +40,15 @@ if (!process.env.JWT_SECRET) {
 }
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase() || "admin@pcmaster.local";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || randomBytes(9).toString("base64url");
-if (!process.env.ADMIN_PASSWORD) {
-  console.warn(`⚠️  CẢNH BÁO: ADMIN_PASSWORD chưa được cấu hình. Mật khẩu admin tạm thời cho phiên này: ${ADMIN_PASSWORD}`);
+const rawAdminPassword = process.env.ADMIN_PASSWORD;
+if (!rawAdminPassword) {
+  console.error("❌ ADMIN_PASSWORD chưa được cấu hình trong .env.local. Vui lòng thêm ADMIN_PASSWORD rồi khởi động lại server.");
+  process.exit(1);
 }
+const ADMIN_PASSWORD = rawAdminPassword.trim();
 
-// ============ CẤU HÌNH GHN / DEMO MODE ============
-const GHN_TOKEN = process.env.GHN_TOKEN || "";
-const GHN_SHOP_ID = process.env.GHN_SHOP_ID || "";
-const SHIPPING_MODE = GHN_TOKEN ? "ghn" : "demo";  // demo = auto-simulate
+// ============ SHIPPING CONFIG ============
+// Manual status management - no auto shipping integration
 
 const DB_CONFIG = {
   host: process.env.DB_HOST || "localhost",
@@ -118,6 +118,8 @@ async function initDatabase() {
       customer_phone VARCHAR(20) DEFAULT NULL,
       shipping_address TEXT DEFAULT NULL,
       total_amount INT NOT NULL,
+      prepaid_amount INT DEFAULT 0,
+      payment_status VARCHAR(50) DEFAULT 'unpaid',
       status VARCHAR(50) DEFAULT 'pending',
       tracking_code VARCHAR(255) DEFAULT NULL,
       shipping_provider VARCHAR(100) DEFAULT NULL,
@@ -127,6 +129,14 @@ async function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     )
   `);
+
+  // Add missing columns if they don't exist
+  try {
+    await pool.execute(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS prepaid_amount INT DEFAULT 0`);
+  } catch (e) { /* column may already exist */ }
+  try {
+    await pool.execute(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'unpaid'`);
+  } catch (e) { /* column may already exist */ }
 
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS order_items (
@@ -324,6 +334,19 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Simple SSE clients list for admin real-time events (orders, alerts)
+  const sseClients: Array<express.Response> = [];
+  const sendSSE = (event: string, data: any) => {
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of sseClients.slice()) {
+      try {
+        client.write(payload);
+      } catch (e) {
+        // ignore write errors
+      }
+    }
+  };
 
   // ============ UPLOAD FILE CONFIG (Multer) ============
   const UPLOAD_DIR = path.join(__dirname, "uploads");
@@ -536,7 +559,7 @@ async function startServer() {
   });
 
   app.post("/api/orders", authenticateToken, async (req: express.Request, res: express.Response) => {
-    const { customer_name, customer_email, customer_phone, shipping_address, items } = req.body;
+    const { customer_name, customer_email, customer_phone, shipping_address, items, payment_status } = req.body;
     const authenticatedUser = (req as AuthenticatedRequest).user;
 
     if (!customer_name || typeof customer_name !== "string" || customer_name.trim().length < 2) {
@@ -553,6 +576,9 @@ async function startServer() {
     }
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Giỏ hàng đang trống" });
+    }
+    if (!payment_status || (payment_status !== 'paid' && payment_status !== 'unpaid')) {
+      return res.status(400).json({ error: "Trạng thái thanh toán không hợp lệ" });
     }
 
     const conn = await db.getConnection();
@@ -592,8 +618,14 @@ async function startServer() {
         computedTotal += product.price * item.quantity;
       }
 
+      // Set prepaid amount based on payment status
+      let finalPrepaidAmount = 0;
+      if (payment_status === 'paid') {
+        finalPrepaidAmount = computedTotal;
+      }
+
       const [orderResult] = await conn.execute(
-        "INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, shipping_address, total_amount) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, shipping_address, total_amount, prepaid_amount, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
           authenticatedUser.id,
           customer_name.trim(),
@@ -601,6 +633,8 @@ async function startServer() {
           customer_phone.trim(),
           shipping_address.trim(),
           computedTotal,
+          finalPrepaidAmount,
+          payment_status,
         ]
       ) as any;
 
@@ -620,6 +654,10 @@ async function startServer() {
       await conn.commit();
       // Ghi lịch sử trạng thái đơn hàng
       try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'pending', 'Đơn hàng mới tạo')", [orderId]); } catch {}
+      // Broadcast to SSE admin listeners about new order
+      try {
+        sendSSE('new_order', { id: orderId, total_amount: computedTotal, customer_name: customer_name.trim(), created_at: new Date().toISOString() });
+      } catch {}
       res.status(201).json({ id: orderId, total_amount: computedTotal, message: "Đặt hàng thành công" });
     } catch (error) {
       await conn.rollback();
@@ -630,10 +668,29 @@ async function startServer() {
     }
   });
 
+  // SSE endpoint for admin real-time events (requires admin)
+  app.get('/api/admin/orders/stream', authenticateToken, requireAdmin, (req: express.Request, res: express.Response) => {
+    res.set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.flushHeaders?.();
+    // initial retry and keep-alive
+    res.write('retry: 10000\n\n');
+    sseClients.push(res);
+    req.on('close', () => {
+      const idx = sseClients.indexOf(res);
+      if (idx !== -1) sseClients.splice(idx, 1);
+    });
+  });
+
   // Admin API (protected)
   app.get("/api/admin/stats", authenticateToken, requireAdmin, async (req, res) => {
     const [orderRows] = await db.execute("SELECT COUNT(*) as count FROM orders") as any;
-    const [revenueRows] = await db.execute("SELECT SUM(total_amount) as total FROM orders") as any;
+    const [revenueRows] = await db.execute(
+      "SELECT COALESCE(SUM(CASE WHEN status = 'delivered' THEN total_amount ELSE 0 END), 0) + COALESCE(SUM(prepaid_amount), 0) as total FROM orders"
+    ) as any;
     const [productRows] = await db.execute("SELECT COUNT(*) as count FROM products") as any;
 
     res.json({
@@ -643,12 +700,121 @@ async function startServer() {
     });
   });
 
+  // Revenue timeseries for a date range (group by day)
+  app.get('/api/admin/revenue', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const { start, end, group } = req.query as any;
+      const startDate = start ? new Date(start) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+      const endDate = end ? new Date(end) : new Date();
+      // normalize to YYYY-MM-DD
+      const startStr = startDate.toISOString().slice(0, 10) + ' 00:00:00';
+      const endStr = new Date(endDate.getTime() + 24*3600*1000).toISOString().slice(0, 10) + ' 00:00:00';
+
+      const groupBy = group === 'month' ? "DATE_FORMAT(created_at, '%Y-%m-01')" : 'DATE(created_at)';
+      const [rows] = await db.execute(
+        `SELECT ${groupBy} as period, 
+                COALESCE(SUM(CASE WHEN status = 'delivered' THEN total_amount ELSE 0 END), 0) + COALESCE(SUM(prepaid_amount), 0) as revenue, 
+                COUNT(*) as orders_count 
+         FROM orders 
+         WHERE created_at >= ? AND created_at < ? 
+         GROUP BY ${groupBy} 
+         ORDER BY ${groupBy} ASC`,
+        [startStr, endStr]
+      ) as any;
+      res.json(rows.map((r: any) => ({ period: r.period, revenue: r.revenue || 0, orders: r.orders_count || 0 })));
+    } catch (e) {
+      res.status(500).json({ error: 'Không lấy được dữ liệu doanh thu' });
+    }
+  });
+
+  // Orders funnel counts
+  app.get('/api/admin/orders/funnel', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const [rows] = await db.execute("SELECT status, COUNT(*) as count FROM orders GROUP BY status") as any;
+      const map: Record<string, number> = { pending: 0, processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
+      for (const r of rows) map[r.status] = r.count;
+      res.json(map);
+    } catch (e) { res.status(500).json({ error: 'Không lấy được funnel' }); }
+  });
+
+  // Top products by units sold / revenue
+  app.get('/api/admin/top-products', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const limit = Math.min(50, parseInt((req.query.limit as string) || '10'));
+      const [rows] = await db.execute(
+        `SELECT p.id, p.name, p.image_url, SUM(oi.quantity) as units_sold, SUM(oi.quantity * oi.price) as revenue
+         FROM order_items oi JOIN products p ON oi.product_id = p.id
+         GROUP BY oi.product_id ORDER BY units_sold DESC LIMIT ?`,
+        [limit]
+      ) as any;
+      res.json(rows.map((r: any) => ({ id: r.id, name: r.name, image_url: r.image_url, units_sold: r.units_sold || 0, revenue: r.revenue || 0 })));
+    } catch (e) { res.status(500).json({ error: 'Không lấy được top products' }); }
+  });
+
+  // Top categories by revenue/units
+  app.get('/api/admin/top-categories', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const limit = Math.min(50, parseInt((req.query.limit as string) || '10'));
+      const [rows] = await db.execute(
+        `SELECT c.id, c.name, SUM(oi.quantity) as units_sold, SUM(oi.quantity * oi.price) as revenue
+         FROM order_items oi JOIN products p ON oi.product_id = p.id JOIN categories c ON p.category_id = c.id
+         GROUP BY c.id ORDER BY revenue DESC LIMIT ?`,
+        [limit]
+      ) as any;
+      res.json(rows.map((r: any) => ({ id: r.id, name: r.name, units_sold: r.units_sold || 0, revenue: r.revenue || 0 })));
+    } catch (e) { res.status(500).json({ error: 'Không lấy được top categories' }); }
+  });
+
+  // Low-stock products
+  app.get('/api/admin/low-stock', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const threshold = Math.max(0, parseInt((req.query.threshold as string) || '5'));
+      const [rows] = await db.execute("SELECT id, name, stock, image_url FROM products WHERE stock <= ? ORDER BY stock ASC", [threshold]) as any;
+      res.json(rows);
+    } catch (e) { res.status(500).json({ error: 'Không lấy được low-stock' }); }
+  });
+
+  // User metrics: new users + AOV
+  app.get('/api/admin/users/metrics', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const { start, end } = req.query as any;
+      const startDate = start ? new Date(start) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+      const endDate = end ? new Date(end) : new Date();
+      const startStr = startDate.toISOString().slice(0,10) + ' 00:00:00';
+      const endStr = new Date(endDate.getTime() + 24*3600*1000).toISOString().slice(0,10) + ' 00:00:00';
+
+      const [newUsersRows] = await db.execute("SELECT DATE(created_at) as date, COUNT(*) as count FROM users WHERE created_at >= ? AND created_at < ? GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC", [startStr, endStr]) as any;
+      const [aovRows] = await db.execute("SELECT AVG(total_amount) as aov FROM orders WHERE created_at >= ? AND created_at < ?", [startStr, endStr]) as any;
+      res.json({ newUsers: newUsersRows.map((r: any) => ({ date: r.date, count: r.count })), aov: Math.round(aovRows[0].aov || 0) });
+    } catch (e) { res.status(500).json({ error: 'Không lấy được user metrics' }); }
+  });
+
+  // Alerts: low-stock + traffic spike detection
+  app.get('/api/admin/alerts', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const threshold = Math.max(0, parseInt((req.query.threshold as string) || '5'));
+      const [lowStock] = await db.execute("SELECT id, name, stock FROM products WHERE stock <= ? ORDER BY stock ASC LIMIT 50", [threshold]) as any;
+
+      // Simple traffic spike detection: compare last 5min vs avg per 5min over last 24h
+      const [last5] = await db.execute("SELECT COUNT(*) as cnt FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)") as any;
+      const [last24] = await db.execute("SELECT COUNT(*) as cnt FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)") as any;
+      const avgPer5 = (last24[0].cnt || 0) / 288; // 288 intervals of 5min in 24h
+      const spike = avgPer5 > 0 && (last5[0].cnt || 0) > (avgPer5 * 3);
+
+      const alerts: any[] = [];
+      if ((lowStock as any[]).length > 0) alerts.push({ type: 'low_stock', items: lowStock });
+      if (spike) alerts.push({ type: 'traffic_spike', last5min: last5[0].cnt || 0, avgPer5: Math.round(avgPer5) });
+
+      res.json({ alerts });
+    } catch (e) { res.status(500).json({ error: 'Không lấy được alerts' }); }
+  });
+
   app.get("/api/admin/orders", authenticateToken, requireAdmin, async (req, res) => {
     const [orders] = await db.execute("SELECT * FROM orders ORDER BY created_at DESC");
     res.json(orders);
   });
 
-  // Admin: Xác nhận đơn hàng → tự động tạo vận đơn & giao hàng
+  // Admin: Xác nhận đơn hàng (manual)
   app.post("/api/admin/orders/:id/confirm", authenticateToken, requireAdmin, async (req, res) => {
     const orderId = req.params.id;
     const [rows] = await db.execute("SELECT * FROM orders WHERE id = ?", [orderId]) as any;
@@ -657,52 +823,16 @@ async function startServer() {
       return res.status(400).json({ error: "Chỉ có thể xác nhận đơn hàng đang chờ xử lý" });
     }
 
-    let trackingCode: string;
-    let provider: string;
-
-    if (SHIPPING_MODE === "ghn") {
-      try {
-        const ghnRes = await fetch("https://dev-online-gateway.ghn.vn/shiip/public-api/v2/shipping-order/create", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Token": GHN_TOKEN,
-            "ShopId": GHN_SHOP_ID,
-          },
-          body: JSON.stringify({
-            to_name: rows[0].customer_name,
-            to_phone: "0900000000",
-            to_address: "Demo address",
-            to_ward_code: "20308",
-            to_district_id: 1444,
-            weight: 500,
-            length: 20,
-            width: 20,
-            height: 10,
-            service_type_id: 2,
-            payment_type_id: 2,
-            required_note: "KHONGCHOXEMHANG",
-            items: [{ name: "PC Parts", quantity: 1, weight: 500 }],
-          }),
-        });
-        const ghnData = await ghnRes.json();
-        trackingCode = ghnData.data?.order_code || `GHN${Date.now()}`;
-        provider = "GHN";
-      } catch {
-        return res.status(500).json({ error: "Lỗi kết nối GHN API" });
-      }
-    } else {
-      trackingCode = `DEMO${Date.now().toString(36).toUpperCase()}`;
-      provider = "DEMO";
-    }
+    // Tạo tracking code manual
+    const trackingCode = `MANUAL${Date.now().toString(36).toUpperCase()}`;
 
     await db.execute(
-      "UPDATE orders SET status = 'processing', tracking_code = ?, shipping_provider = ?, shipped_at = NOW() WHERE id = ?",
-      [trackingCode, provider, orderId]
+      "UPDATE orders SET status = 'processing', tracking_code = ?, shipping_provider = ? WHERE id = ?",
+      [trackingCode, "Manual", orderId]
     );
     try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'processing', ?)", [orderId, `Đã xác nhận - Mã vận đơn: ${trackingCode}`]); } catch {}
 
-    res.json({ tracking_code: trackingCode, provider, message: "Đã xác nhận & tạo vận đơn thành công" });
+    res.json({ tracking_code: trackingCode, message: "Đã xác nhận đơn hàng" });
   });
 
   // Admin: Hủy đơn hàng
@@ -723,6 +853,36 @@ async function startServer() {
     await db.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", [orderId]);
     try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'cancelled', 'Đơn hàng đã bị hủy')", [orderId]); } catch {}
     res.json({ message: "Đã hủy đơn hàng & hoàn trả kho" });
+  });
+
+  // Admin: Cập nhật trạng thái đơn hàng thủ công
+  app.put("/api/admin/orders/:id", authenticateToken, requireAdmin, async (req, res) => {
+    const orderId = req.params.id;
+    const { status } = req.body;
+    const validStatuses = ["pending", "processing", "shipped", "delivered", "cancelled"];
+    
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: "Trạng thái không hợp lệ" });
+    }
+    
+    const [rows] = await db.execute("SELECT * FROM orders WHERE id = ?", [orderId]) as any;
+    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+    
+    // Nếu chuyển sang cancelled và không phải pending, hoàn trả stock
+    if (status === "cancelled" && rows[0].status !== "cancelled") {
+      const [items] = await db.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", [orderId]) as any;
+      for (const item of items) {
+        await db.execute("UPDATE products SET stock = stock + ? WHERE id = ?", [item.quantity, item.product_id]);
+      }
+    }
+    
+    try {
+      await db.execute("UPDATE orders SET status = ? WHERE id = ?", [status, orderId]);
+      await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)", [orderId, status, `Cập nhật trạng thái thành ${status}`]);
+      res.json({ message: "Cập nhật trạng thái thành công" });
+    } catch (error) {
+      res.status(500).json({ error: "Cập nhật thất bại" });
+    }
   });
 
   app.post("/api/admin/products", authenticateToken, requireAdmin, async (req, res) => {
@@ -949,14 +1109,8 @@ async function startServer() {
       timeline.push({ status: statusOrder[i], label: labels[statusOrder[i]], time: null, done: false });
     }
 
-    let trackingUrl = null;
-    if (order.tracking_code) {
-      if (order.shipping_provider === "GHN") {
-        trackingUrl = `https://tracking.ghn.dev/?order_code=${order.tracking_code}`;
-      } else {
-        trackingUrl = null; // Demo mode: tracking trên trang nội bộ
-      }
-    }
+    // External tracking providers removed; tracking handled manually by admin
+    const trackingUrl = null;
 
     res.json({ ...order, timeline, tracking_url: trackingUrl });
   });
@@ -975,106 +1129,8 @@ async function startServer() {
     res.json(items);
   });
 
-  // ============ DEMO: Tự động chuyển trạng thái ============
-  if (SHIPPING_MODE === "demo") {
-    const DEMO_TRANSITIONS: Record<string, { next: string; delayMs: number }> = {
-      processing: { next: "shipped", delayMs: 30_000 },   // 30s → đang giao
-      shipped:    { next: "delivered", delayMs: 60_000 },  // 60s → đã giao
-    };
-
-    const syncDemoOrders = async () => {
-      try {
-        for (const [fromStatus, { next, delayMs }] of Object.entries(DEMO_TRANSITIONS)) {
-          const [rows] = await db.execute(
-            `SELECT id, shipped_at, status FROM orders 
-             WHERE status = ? AND shipping_provider = 'DEMO' AND shipped_at IS NOT NULL 
-             AND TIMESTAMPDIFF(SECOND, shipped_at, NOW()) > ?`,
-            [fromStatus, delayMs / 1000]
-          ) as any;
-
-          for (const order of rows) {
-            await db.execute("UPDATE orders SET status = ? WHERE id = ?", [next, order.id]);
-            try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)", [order.id, next, `Tự động chuyển: ${fromStatus} → ${next}`]); } catch {}
-            console.log(`📦 Demo: Đơn #${order.id}: ${fromStatus} → ${next}`);
-          }
-        }
-      } catch (e) {
-        // Bỏ qua lỗi cron
-      }
-    };
-
-    // Chạy mỗi 10 giây
-    setInterval(syncDemoOrders, 10_000);
-    console.log(`🚀 Chế độ DEMO: trạng thái đơn hàng sẽ tự chuyển (processing→30s→shipped→60s→delivered)`);
-  } else {
-    // ============ GHN: Polling trạng thái thật ============
-    // Map trạng thái GHN → trạng thái đơn hàng nội bộ
-    const GHN_STATUS_MAP: Record<string, string> = {
-      "ready_to_pick":  "processing",   // Chờ lấy hàng
-      "picking":        "processing",   // Đang lấy hàng
-      "picked":         "processing",   // Đã lấy hàng
-      "storing":        "processing",   // Đã nhập kho
-      "transporting":   "shipped",      // Đang vận chuyển
-      "delivering":     "shipped",      // Đang giao hàng
-      "delivered":      "delivered",    // Đã giao
-      "delivery_fail":  "shipped",      // Giao thất bại (vẫn đang giao)
-      "return":         "cancelled",    // Hoàn trả
-      "returned":       "cancelled",    // Đã hoàn trả
-      "cancel":         "cancelled",    // Hủy đơn
-    };
-
-    const syncGhnOrders = async () => {
-      try {
-        // Lấy tất cả đơn GHN đang chờ cập nhật (chưa delivered/cancelled)
-        const [rows] = await db.execute(
-          `SELECT id, tracking_code, status FROM orders 
-           WHERE shipping_provider = 'GHN' 
-           AND tracking_code IS NOT NULL 
-           AND status NOT IN ('delivered', 'cancelled')`
-        ) as any;
-
-        for (const order of rows) {
-          try {
-            const ghnRes = await fetch(
-              "https://dev-online-gateway.ghn.vn/shiip/public-api/v2/shipping-order/detail",
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Token": GHN_TOKEN,
-                },
-                body: JSON.stringify({ order_code: order.tracking_code }),
-              }
-            );
-            const ghnData = await ghnRes.json();
-            const ghnStatus = ghnData.data?.status;
-
-            if (ghnStatus && GHN_STATUS_MAP[ghnStatus]) {
-              const newStatus = GHN_STATUS_MAP[ghnStatus];
-              if (newStatus !== order.status) {
-                await db.execute(
-                  "UPDATE orders SET status = ? WHERE id = ?",
-                  [newStatus, order.id]
-                );
-                try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)", [order.id, newStatus, `GHN: ${ghnStatus} → ${newStatus}`]); } catch {}
-                console.log(`🚚 GHN: Đơn #${order.id} (${order.tracking_code}): ${order.status} → ${newStatus} (GHN: ${ghnStatus})`);
-              }
-            }
-          } catch {
-            // Bỏ qua lỗi từng đơn, tiếp tục đơn khác
-          }
-        }
-      } catch (e) {
-        console.error("Lỗi polling GHN:", e);
-      }
-    };
-
-    // Polling mỗi 5 phút
-    setInterval(syncGhnOrders, 5 * 60_000);
-    // Chạy lần đầu sau 10s
-    setTimeout(syncGhnOrders, 10_000);
-    console.log(`🚚 Chế độ GHN: polling trạng thái mỗi 5 phút`);
-  }
+  // Manual status management: Admin updates order statuses via dashboard
+  console.log("✅ Chế độ quản lý thủ công: Admin cập nhật trạng thái qua dropdown");
 
   // Vite middleware cho development
   if (process.env.NODE_ENV !== "production") {

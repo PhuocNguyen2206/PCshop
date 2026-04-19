@@ -11,6 +11,8 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
   const [customerInfo, setCustomerInfo] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '', address: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -22,11 +24,13 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
     return () => { document.body.style.overflow = ''; };
   }, [isOpen]);
 
-  const handleCheckout = async () => {
+  const handleCheckout = async (status: 'paid' | 'unpaid') => {
     if (!customerInfo.name || !customerInfo.email || !customerInfo.phone || !customerInfo.address) {
       toast.warning('Vui lòng nhập đầy đủ thông tin');
       return;
     }
+    setIsSubmitting(true);
+    setPaymentStatus(status);
     try {
       const res = await fetch('/api/orders', {
         method: 'POST',
@@ -37,19 +41,26 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
           customer_phone: customerInfo.phone,
           shipping_address: customerInfo.address,
           items,
+          payment_status: status,
         }),
       });
       if (res.ok) {
         setOrderSuccess(true);
         clearCart();
         setIsCheckingOut(false);
+        setPaymentStatus(null);
         setTimeout(() => { setOrderSuccess(false); onClose(); }, 4000);
+        const statusText = status === 'paid' ? 'Thanh toán thành công!' : 'Đặt hàng thành công!';
+        toast.success(statusText);
       } else {
         const data = await res.json();
-        toast.error(data.error || 'Đặt hàng thất bại');
+        toast.error(data.error || 'Thao tác thất bại');
       }
     } catch (err) {
       toast.error('Lỗi kết nối. Vui lòng thử lại.');
+    } finally {
+      setIsSubmitting(false);
+      setPaymentStatus(null);
     }
   };
 
@@ -239,21 +250,44 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
                       <div className="flex gap-2 pt-1">
                         <button
                           onClick={() => setIsCheckingOut(false)}
-                          className="flex-1 py-3 text-sm font-semibold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                          disabled={isSubmitting}
+                          className="flex-1 py-3 text-sm font-semibold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Quay lại
                         </button>
                         <button
-                          onClick={handleCheckout}
-                          className="flex-[2] py-3 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl hover:shadow-lg hover:shadow-indigo-500/25 transition-all"
+                          onClick={() => handleCheckout('unpaid')}
+                          disabled={isSubmitting}
+                          className="flex-1 py-3 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl hover:shadow-lg hover:shadow-indigo-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
-                          Xác nhận đặt hàng
+                          {isSubmitting && paymentStatus === 'unpaid' ? (
+                            <>
+                              <span className="inline-block animate-spin">⏳</span>
+                              Đang xử lý...
+                            </>
+                          ) : (
+                            'Đặt hàng'
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleCheckout('paid')}
+                          disabled={isSubmitting}
+                          className="flex-1 py-3 text-sm font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl hover:shadow-lg hover:shadow-emerald-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                          {isSubmitting && paymentStatus === 'paid' ? (
+                            <>
+                              <span className="inline-block animate-spin">⏳</span>
+                              Thanh toán...
+                            </>
+                          ) : (
+                            'Thanh toán'
+                          )}
                         </button>
                       </div>
                     </motion.div>
                   ) : (
                     <motion.button
-                      key="pay"
+                      key="checkout"
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -10 }}
@@ -262,7 +296,7 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
                       onClick={() => setIsCheckingOut(true)}
                       className="w-full py-3.5 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 rounded-2xl shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:shadow-indigo-500/25 transition-all flex items-center justify-center gap-2"
                     >
-                      Thanh toán
+                      Đặt hàng
                       <ChevronRight className="w-4 h-4" />
                     </motion.button>
                   )}
