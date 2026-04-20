@@ -1,9 +1,9 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Package, ShoppingBag, User as UserIcon, Plus, Edit2, Trash2, X, ChevronDown, DollarSign, TrendingUp, Truck, Cpu, FolderOpen, AlertTriangle, Zap } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingBag, User as UserIcon, Plus, Edit2, Trash2, X, ChevronDown, ChevronUp, DollarSign, Cpu, FolderOpen, AlertTriangle, ArrowUpDown, Check, MessageCircle, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { format, subDays } from 'date-fns';
-import { Product, Category, Order, User } from '../types';
+import { Product, Category, Order, User, Conversation, Message } from '../types';
 import { useAuth } from '../AuthContext';
 import { useToast } from './Toast';
 import { ImageUpload } from './ImageUpload';
@@ -24,17 +24,101 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled:  'Đã hủy',
 };
 
-const StatusBadge = ({ status }: { status: string }) => {
+const CHART_COLORS = ['#4f46e5', '#7c3aed', '#ec4899', '#f59e0b', '#10b981'];
+
+const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+  pending: ['processing', 'cancelled'],
+  processing: ['shipped', 'cancelled'],
+  shipped: ['delivered'],
+  delivered: [],
+  cancelled: [],
+};
+
+const OrderStatusDropdown = ({ status, onChange }: { status: string; onChange: (s: string) => void }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   const s = STATUS_STYLES[status] || STATUS_STYLES.pending;
+  const transitions = ALLOWED_TRANSITIONS[status] || [];
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${s.bg} ${s.text}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-      {STATUS_LABELS[status] || status}
-    </span>
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => transitions.length > 0 && setOpen(!open)}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${s.bg} ${s.text} ${transitions.length > 0 ? 'cursor-pointer hover:shadow-sm' : 'cursor-default opacity-80'}`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+        {STATUS_LABELS[status] || status}
+        {transitions.length > 0 && <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.95 }}
+            transition={{ duration: 0.15 }}
+            className="absolute right-0 top-full mt-1.5 w-40 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-200/50 py-1 z-50 overflow-hidden"
+          >
+            {transitions.map((t) => {
+              const ts = STATUS_STYLES[t] || STATUS_STYLES.pending;
+              return (
+                <button
+                  key={t}
+                  onClick={() => { onChange(t); setOpen(false); }}
+                  className="w-full px-3 py-2 text-left text-xs font-medium flex items-center gap-2 hover:bg-slate-50 transition-colors"
+                >
+                  <span className={`w-2 h-2 rounded-full ${ts.dot}`} />
+                  <span className={ts.text}>{STATUS_LABELS[t]}</span>
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 };
 
-const CHART_COLORS = ['#4f46e5', '#7c3aed', '#ec4899', '#f59e0b', '#10b981'];
+type SortDir = 'asc' | 'desc';
+type SortConfig = { key: string; dir: SortDir };
+
+const SortHeader = ({ label, sortKey, sort, onSort, className = '' }: { label: string; sortKey: string; sort: SortConfig; onSort: (key: string) => void; className?: string }) => (
+  <th
+    className={`px-6 py-4 cursor-pointer select-none hover:text-slate-700 transition-colors group whitespace-nowrap ${className}`}
+    onClick={() => onSort(sortKey)}
+  >
+    <span className="inline-flex items-center gap-1">
+      {label}
+      {sort.key === sortKey ? (
+        sort.dir === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />
+      ) : (
+        <ArrowUpDown className="w-3 h-3 opacity-0 group-hover:opacity-40 transition-opacity" />
+      )}
+    </span>
+  </th>
+);
+
+const SortHeaderSm = ({ label, sortKey, sort, onSort, className = '' }: { label: string; sortKey: string; sort: SortConfig; onSort: (key: string) => void; className?: string }) => (
+  <th
+    className={`px-3 py-3 whitespace-nowrap cursor-pointer select-none hover:text-slate-700 transition-colors group ${className}`}
+    onClick={() => onSort(sortKey)}
+  >
+    <span className="inline-flex items-center gap-1">
+      {label}
+      {sort.key === sortKey ? (
+        sort.dir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+      ) : (
+        <ArrowUpDown className="w-2.5 h-2.5 opacity-0 group-hover:opacity-40 transition-opacity" />
+      )}
+    </span>
+  </th>
+);
 
 export const AdminDashboard = () => {
   const [stats, setStats] = useState<any>(null);
@@ -42,7 +126,7 @@ export const AdminDashboard = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'users' | 'categories'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'users' | 'categories' | 'chat'>('overview');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   
@@ -56,12 +140,52 @@ export const AdminDashboard = () => {
   const [topCategories, setTopCategories] = useState<any[]>([]);
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
   const [userMetrics, setUserMetrics] = useState<any[]>([]);
-  const [alerts, setAlerts] = useState<any[]>([]);
   const [realtimeOrders, setRealtimeOrders] = useState<any[]>([]);
+  const [productSort, setProductSort] = useState<SortConfig>({ key: 'name', dir: 'asc' });
+  const [orderSort, setOrderSort] = useState<SortConfig>({ key: 'created_at', dir: 'desc' });
   
   const { authHeaders } = useAuth();
   const { toast, confirm } = useToast();
   const sseRef = useRef<EventSource | null>(null);
+
+  // Chat state
+  const [chatConversations, setChatConversations] = useState<Conversation[]>([]);
+  const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatSending, setChatSending] = useState(false);
+  const chatMessagesContainerRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const chatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chatPollErrorCount = useRef(0);
+
+  const toggleSort = (setter: React.Dispatch<React.SetStateAction<SortConfig>>) => (key: string) => {
+    setter(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  };
+
+  const sortedProducts = [...products].sort((a, b) => {
+    const dir = productSort.dir === 'asc' ? 1 : -1;
+    switch (productSort.key) {
+      case 'name': return dir * a.name.localeCompare(b.name, 'vi');
+      case 'category': return dir * (a.category_name || '').localeCompare(b.category_name || '', 'vi');
+      case 'price': return dir * (a.price - b.price);
+      case 'stock': return dir * (a.stock - b.stock);
+      default: return 0;
+    }
+  });
+
+  const sortedOrders = [...orders].sort((a, b) => {
+    const dir = orderSort.dir === 'asc' ? 1 : -1;
+    switch (orderSort.key) {
+      case 'id': return dir * (a.id - b.id);
+      case 'customer': return dir * (a.customer_name || '').localeCompare(b.customer_name || '', 'vi');
+      case 'created_at': return dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      case 'total': return dir * (a.total_amount - b.total_amount);
+      case 'payment': return dir * (a.payment_status || '').localeCompare(b.payment_status || '');
+      case 'status': return dir * (a.status || '').localeCompare(b.status || '');
+      default: return 0;
+    }
+  });
 
   // Helper: Calculate start/end dates based on time range
   const getDateRange = () => {
@@ -97,33 +221,46 @@ export const AdminDashboard = () => {
     const { start, end } = getDateRange();
     
     try {
+      // Stats (main numbers)
+      const statsRes = await fetch('/api/admin/stats', { headers });
+      if (statsRes.ok) setStats(await statsRes.json());
+      else console.error('Stats error:', statsRes.status, await statsRes.text());
+
       // Revenue timeseries
       const revRes = await fetch(`/api/admin/revenue?start_date=${start}&end_date=${end}&group_by=day`, { headers });
       if (revRes.ok) setRevenueData(await revRes.json());
+      else console.error('Revenue error:', revRes.status, await revRes.text());
       
-      // Order funnel
+      // Order funnel (API returns {pending: 0, ...} object, convert to array)
       const funnelRes = await fetch('/api/admin/orders/funnel', { headers });
-      if (funnelRes.ok) setFunnelData(await funnelRes.json());
+      if (funnelRes.ok) {
+        const funnelObj = await funnelRes.json();
+        const funnelArr = Object.entries(funnelObj).map(([status, count]) => ({ status: STATUS_LABELS[status] || status, count }));
+        setFunnelData(funnelArr);
+      } else console.error('Funnel error:', funnelRes.status, await funnelRes.text());
       
       // Top products
       const prodRes = await fetch('/api/admin/top-products?limit=5', { headers });
       if (prodRes.ok) setTopProducts(await prodRes.json());
+      else console.error('Top products error:', prodRes.status, await prodRes.text());
       
       // Top categories
       const catRes = await fetch('/api/admin/top-categories?limit=5', { headers });
       if (catRes.ok) setTopCategories(await catRes.json());
+      else console.error('Top categories error:', catRes.status, await catRes.text());
       
       // Low stock alerts
       const stockRes = await fetch('/api/admin/low-stock?threshold=5', { headers });
       if (stockRes.ok) setLowStockItems(await stockRes.json());
+      else console.error('Low stock error:', stockRes.status, await stockRes.text());
       
-      // User metrics
+      // User metrics (API returns {newUsers: [...], aov: ...})
       const userRes = await fetch(`/api/admin/users/metrics?start_date=${start}&end_date=${end}`, { headers });
-      if (userRes.ok) setUserMetrics(await userRes.json());
+      if (userRes.ok) {
+        const userMetricsData = await userRes.json();
+        setUserMetrics(userMetricsData.newUsers || []);
+      } else console.error('User metrics error:', userRes.status, await userRes.text());
       
-      // Alerts (low-stock + traffic spikes)
-      const alertRes = await fetch('/api/admin/alerts', { headers });
-      if (alertRes.ok) setAlerts(await alertRes.json());
     } catch (err) {
       console.error('Analytics load error:', err);
     }
@@ -133,7 +270,14 @@ export const AdminDashboard = () => {
   const setupSSE = () => {
     if (sseRef.current) sseRef.current.close();
     
-    const eventSource = new EventSource('/api/admin/orders/stream');
+    const authHeader = authHeaders().Authorization;
+    const token = authHeader?.replace(/^Bearer\s+/, '');
+    if (!token) {
+      console.warn('Admin SSE skipped because no auth token is available');
+      return;
+    }
+
+    const eventSource = new EventSource(`/api/admin/orders/stream?token=${encodeURIComponent(token)}`);
     
     eventSource.addEventListener('new_order', (e) => {
       try {
@@ -180,9 +324,14 @@ export const AdminDashboard = () => {
   const handleDeleteProduct = async (id: number) => {
     const ok = await confirm({ title: 'Xóa sản phẩm', message: 'Bạn có chắc chắn muốn xóa sản phẩm này?', type: 'danger', confirmText: 'Xóa' });
     if (ok) {
-      await fetch(`/api/admin/products/${id}`, { method: 'DELETE', headers: authHeaders() });
-      setProducts(prev => prev.filter(p => p.id !== id));
-      toast.success('Đã xóa sản phẩm');
+      const res = await fetch(`/api/admin/products/${id}`, { method: 'DELETE', headers: authHeaders() });
+      if (res.ok) {
+        setProducts(prev => prev.filter(p => p.id !== id));
+        toast.success('Đã xóa sản phẩm');
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Không thể xóa sản phẩm');
+      }
     }
   };
 
@@ -223,9 +372,12 @@ export const AdminDashboard = () => {
         }
         setEditingProduct(null);
         toast.success(isNew ? 'Thêm sản phẩm thành công!' : 'Cập nhật sản phẩm thành công!');
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Thao tác thất bại');
       }
     } catch (err) {
-      console.error(err);
+      toast.error('Lỗi kết nối server');
     }
   };
 
@@ -238,7 +390,17 @@ export const AdminDashboard = () => {
       });
       const data = await res.json();
       if (res.ok) {
-        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+        // Refresh orders from server to ensure we have latest data
+        const ordersRes = await fetch('/api/admin/orders', { headers: authHeaders() });
+        if (ordersRes.ok) {
+          const freshOrders = await ordersRes.json();
+          setOrders(freshOrders);
+        } else {
+          // Fallback to local update
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+        }
+        // Refetch analytics to update revenue, stats, and charts
+        loadAnalyticsData(authHeaders());
         toast.success(`Cập nhật trạng thái thành ${STATUS_LABELS[newStatus]}`);
       } else {
         toast.error(data.error || 'Cập nhật thất bại');
@@ -292,6 +454,122 @@ export const AdminDashboard = () => {
     }
   };
 
+  // ============ CHAT FUNCTIONS ============
+  const loadChatConversations = async () => {
+    try {
+      const res = await fetch('/api/chat/conversations', { headers: authHeaders() });
+      if (res.ok) setChatConversations(await res.json());
+    } catch {
+      // Silently ignore — server may be restarting
+    }
+  };
+
+  const loadChatMessages = async (convId: number) => {
+    try {
+      const res = await fetch(`/api/chat/conversations/${convId}/messages`, { headers: authHeaders() });
+      if (res.ok) {
+        chatPollErrorCount.current = 0;
+        setChatMessages(await res.json());
+        loadChatConversations();
+      }
+    } catch {
+      chatPollErrorCount.current += 1;
+      if (chatPollErrorCount.current >= 3 && chatPollRef.current) {
+        clearInterval(chatPollRef.current);
+        chatPollRef.current = null;
+      }
+    }
+  };
+
+  const handleSelectConv = (conv: Conversation) => {
+    setSelectedConv(conv);
+    loadChatMessages(conv.id);
+    // Clear existing poll and start new one
+    if (chatPollRef.current) clearInterval(chatPollRef.current);
+    chatPollErrorCount.current = 0;
+    chatPollRef.current = setInterval(() => loadChatMessages(conv.id), 3000);
+    setTimeout(() => chatInputRef.current?.focus(), 100);
+  };
+
+  const handleSendChatMessage = async () => {
+    if (!chatInput.trim() || !selectedConv || chatSending) return;
+    const content = chatInput.trim();
+    setChatInput('');
+    setChatSending(true);
+    try {
+      const res = await fetch(`/api/chat/conversations/${selectedConv.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ content }),
+      });
+      if (res.ok) {
+        const newMsg = await res.json();
+        setChatMessages(prev => [...prev, newMsg]);
+        setTimeout(() => { const el = chatMessagesContainerRef.current; if (el) el.scrollTop = el.scrollHeight; }, 50);
+      }
+    } catch (e) {
+      console.error('Failed to send message:', e);
+    } finally {
+      setChatSending(false);
+      chatInputRef.current?.focus();
+    }
+  };
+
+  const handleCloseConv = async (convId: number) => {
+    try {
+      const res = await fetch(`/api/chat/conversations/${convId}/close`, {
+        method: 'PUT',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        toast.success('Đã đóng cuộc hội thoại');
+        loadChatConversations();
+        if (selectedConv?.id === convId) {
+          setSelectedConv(null);
+          setChatMessages([]);
+          if (chatPollRef.current) clearInterval(chatPollRef.current);
+        }
+      }
+    } catch (e) {
+      toast.error('Lỗi đóng cuộc hội thoại');
+    }
+  };
+
+  // Load conversations when switching to chat tab
+  useEffect(() => {
+    if (activeTab === 'chat') {
+      loadChatConversations();
+      const interval = setInterval(loadChatConversations, 5000);
+      return () => clearInterval(interval);
+    } else {
+      // Clean up chat poll when leaving chat tab
+      if (chatPollRef.current) clearInterval(chatPollRef.current);
+    }
+  }, [activeTab]);
+
+  // Auto-scroll chat messages
+  useEffect(() => {
+    const el = chatMessagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatMessages]);
+
+  const chatFormatTime = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const chatFormatDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) return 'Hôm nay';
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return 'Hôm qua';
+    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+  };
+
+  const totalChatUnread = chatConversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       {/* Admin Header */}
@@ -314,6 +592,7 @@ export const AdminDashboard = () => {
             { key: 'categories', icon: FolderOpen, label: 'Danh mục' },
             { key: 'orders', icon: ShoppingBag, label: 'Đơn hàng' },
             { key: 'users', icon: UserIcon, label: 'Khách hàng' },
+            { key: 'chat', icon: MessageCircle, label: 'Tin nhắn', badge: totalChatUnread },
           ].map(tab => (
             <motion.button 
               key={tab.key}
@@ -323,6 +602,11 @@ export const AdminDashboard = () => {
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === tab.key ? 'bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}
             >
               <tab.icon className="w-4 h-4" /> {tab.label}
+              {'badge' in tab && (tab as any).badge > 0 && (
+                <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full ${activeTab === tab.key ? 'bg-white/20 text-white' : 'bg-red-100 text-red-600'}`}>
+                  {(tab as any).badge > 99 ? '99+' : (tab as any).badge}
+                </span>
+              )}
             </motion.button>
           ))}
         </div>
@@ -410,16 +694,75 @@ export const AdminDashboard = () => {
               {/* Revenue Chart */}
               {revenueData.length > 0 && (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-                  <h3 className="font-bold text-slate-900 mb-4">Doanh thu theo ngày</h3>
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-lg">Doanh thu theo ngày</h3>
+                      <p className="text-sm text-slate-500 mt-0.5">
+                        Tổng: {revenueData.reduce((s, d) => s + Number(d.revenue || 0), 0).toLocaleString('vi-VN')}đ
+                        &nbsp;·&nbsp; {revenueData.reduce((s, d) => s + Number(d.orders || 0), 0)} đơn hàng
+                      </p>
+                    </div>
+                  </div>
                   <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={revenueData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="date" stroke="#94a3b8" style={{ fontSize: '12px' }} />
-                      <YAxis stroke="#94a3b8" style={{ fontSize: '12px' }} />
-                      <Tooltip contentStyle={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '8px' }} />
-                      <Legend />
-                      <Line type="monotone" dataKey="revenue" stroke="#4f46e5" name="Doanh thu (đ)" strokeWidth={2} dot={{ fill: '#4f46e5', r: 4 }} activeDot={{ r: 6 }} />
-                    </LineChart>
+                    <AreaChart data={revenueData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+                      <defs>
+                        <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.2} />
+                          <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="ordersGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                      <XAxis
+                        dataKey="period"
+                        stroke="#cbd5e1"
+                        tick={{ fill: '#94a3b8', fontSize: 11 }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(v) => {
+                          const d = new Date(v);
+                          return isNaN(d.getTime()) ? v : `${d.getDate()}/${d.getMonth() + 1}`;
+                        }}
+                      />
+                      <YAxis
+                        stroke="#cbd5e1"
+                        tick={{ fill: '#94a3b8', fontSize: 11 }}
+                        tickLine={false}
+                        axisLine={false}
+                        yAxisId="revenue"
+                        orientation="left"
+                        tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(0)}K` : v}
+                      />
+                      <YAxis
+                        yAxisId="orders"
+                        orientation="right"
+                        stroke="#cbd5e1"
+                        tick={{ fill: '#94a3b8', fontSize: 11 }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)', padding: '10px 14px' }}
+                        labelStyle={{ color: '#475569', fontWeight: 600, marginBottom: 6 }}
+                        labelFormatter={(v) => {
+                          const d = new Date(v);
+                          return isNaN(d.getTime()) ? v : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                        }}
+                        formatter={(value: any, name: any) => {
+                          if (name === 'Doanh thu') return [value.toLocaleString('vi-VN') + 'đ', name];
+                          return [value, name];
+                        }}
+                      />
+                      <Legend
+                        wrapperStyle={{ paddingTop: 16, fontSize: 12 }}
+                        formatter={(value) => <span style={{ color: '#64748b' }}>{value}</span>}
+                      />
+                      <Area yAxisId="revenue" type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2.5} fill="url(#revenueGradient)" name="Doanh thu" dot={false} activeDot={{ r: 5, fill: '#4f46e5', strokeWidth: 2, stroke: '#fff' }} />
+                      <Area yAxisId="orders" type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} fill="url(#ordersGradient)" name="Đơn hàng" dot={false} activeDot={{ r: 4, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
               )}
@@ -453,7 +796,7 @@ export const AdminDashboard = () => {
                     <ResponsiveContainer width="100%" height={300}>
                       <BarChart data={topProducts}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="product_name" stroke="#94a3b8" style={{ fontSize: '11px' }} width={50} />
+                        <XAxis dataKey="name" stroke="#94a3b8" style={{ fontSize: '11px' }} width={50} />
                         <YAxis stroke="#94a3b8" style={{ fontSize: '12px' }} />
                         <Tooltip contentStyle={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '8px' }} />
                         <Bar dataKey="units_sold" fill="#10b981" name="Bán được (cái)" />
@@ -471,10 +814,10 @@ export const AdminDashboard = () => {
                     <ResponsiveContainer width="100%" height={300}>
                       <BarChart data={topCategories}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="category_name" stroke="#94a3b8" style={{ fontSize: '11px' }} />
+                        <XAxis dataKey="name" stroke="#94a3b8" style={{ fontSize: '11px' }} />
                         <YAxis stroke="#94a3b8" style={{ fontSize: '12px' }} />
                         <Tooltip contentStyle={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '8px' }} />
-                        <Bar dataKey="total_revenue" fill="#f59e0b" name="Doanh thu (đ)" />
+                        <Bar dataKey="revenue" fill="#f59e0b" name="Doanh thu (đ)" />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -482,17 +825,64 @@ export const AdminDashboard = () => {
 
                 {userMetrics.length > 0 && (
                   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-                    <h3 className="font-bold text-slate-900 mb-4">Khách hàng mới hàng ngày</h3>
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="font-bold text-slate-900">Khách hàng mới</h3>
+                        <p className="text-sm text-slate-500 mt-0.5">
+                          Tổng: <span className="font-semibold text-pink-600">{userMetrics.reduce((s, d) => s + Number(d.count || 0), 0)}</span> khách hàng mới
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 bg-pink-100 rounded-xl flex items-center justify-center">
+                        <UserIcon className="w-5 h-5 text-pink-600" />
+                      </div>
+                    </div>
                     <ResponsiveContainer width="100%" height={300}>
-                      <LineChart data={userMetrics}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="date" stroke="#94a3b8" style={{ fontSize: '12px' }} />
-                        <YAxis stroke="#94a3b8" style={{ fontSize: '12px' }} />
-                        <Tooltip contentStyle={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '8px' }} />
-                        <Legend />
-                        <Line type="monotone" dataKey="new_users" stroke="#ec4899" name="Khách hàng mới" strokeWidth={2} dot={{ fill: '#ec4899', r: 4 }} />
-                        <Line type="monotone" dataKey="avg_order_value" stroke="#8b5cf6" name="AOV (đ)" strokeWidth={2} dot={{ fill: '#8b5cf6', r: 4 }} />
-                      </LineChart>
+                      <AreaChart data={userMetrics} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+                        <defs>
+                          <linearGradient id="userGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#ec4899" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="#ec4899" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          stroke="#cbd5e1"
+                          tick={{ fill: '#94a3b8', fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(v) => {
+                            const d = new Date(v);
+                            return isNaN(d.getTime()) ? v : `${d.getDate()}/${d.getMonth() + 1}`;
+                          }}
+                        />
+                        <YAxis
+                          stroke="#cbd5e1"
+                          tick={{ fill: '#94a3b8', fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={false}
+                          allowDecimals={false}
+                        />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)', padding: '10px 14px' }}
+                          labelStyle={{ color: '#475569', fontWeight: 600, marginBottom: 6 }}
+                          labelFormatter={(v) => {
+                            const d = new Date(v);
+                            return isNaN(d.getTime()) ? v : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                          }}
+                          formatter={(value: any) => [`${value} khách hàng`, 'Đăng ký mới']}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="count"
+                          stroke="#ec4899"
+                          strokeWidth={2.5}
+                          fill="url(#userGradient)"
+                          name="Khách hàng mới"
+                          dot={{ fill: '#ec4899', r: 3, strokeWidth: 2, stroke: '#fff' }}
+                          activeDot={{ r: 6, fill: '#ec4899', strokeWidth: 2, stroke: '#fff' }}
+                        />
+                      </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 )}
@@ -517,7 +907,7 @@ export const AdminDashboard = () => {
                       <tbody className="divide-y divide-slate-100">
                         {lowStockItems.slice(0, 10).map((item, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
-                            <td className="px-6 py-4 font-medium text-slate-900">{item.product_name}</td>
+                            <td className="px-6 py-4 font-medium text-slate-900">{item.name}</td>
                             <td className="px-6 py-4 text-slate-500">{item.stock} cái</td>
                             <td className="px-6 py-4">
                               <span className={`px-2 py-1 rounded-full text-xs font-bold ${item.stock <= 2 ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
@@ -532,22 +922,7 @@ export const AdminDashboard = () => {
                 </div>
               )}
 
-              {/* Alerts Section */}
-              {alerts.length > 0 && (
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Zap className="w-5 h-5 text-amber-500" />
-                    <h3 className="font-bold text-slate-900">Cảnh báo</h3>
-                  </div>
-                  <div className="space-y-2">
-                    {alerts.map((alert, idx) => (
-                      <div key={idx} className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
-                        {alert.message}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+
 
               {/* Real-time Orders */}
               {realtimeOrders.length > 0 && (
@@ -623,17 +998,7 @@ export const AdminDashboard = () => {
                             )}
                           </td>
                           <td className="px-3 py-3 whitespace-nowrap">
-                            <select
-                              value={order.status}
-                              onChange={(e) => handleUpdateOrderStatus(order.id, e.target.value)}
-                              className={`text-xs font-semibold border rounded px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 transition-all ${STATUS_STYLES[order.status]?.bg || ''} ${STATUS_STYLES[order.status]?.text || ''}`}
-                            >
-                              <option value="pending">Chờ xử lý</option>
-                              <option value="processing">Đang xử lý</option>
-                              <option value="shipped">Đang giao</option>
-                              <option value="delivered">Đã giao</option>
-                              <option value="cancelled">Đã hủy</option>
-                            </select>
+                            <OrderStatusDropdown status={order.status} onChange={(s) => handleUpdateOrderStatus(order.id, s)} />
                           </td>
                         </tr>
                       ))}
@@ -659,15 +1024,15 @@ export const AdminDashboard = () => {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 font-medium">
                     <tr>
-                      <th className="px-6 py-4">Sản phẩm</th>
-                      <th className="px-6 py-4">Danh mục</th>
-                      <th className="px-6 py-4">Giá</th>
-                      <th className="px-6 py-4">Kho</th>
+                      <SortHeader label="Sản phẩm" sortKey="name" sort={productSort} onSort={toggleSort(setProductSort)} />
+                      <SortHeader label="Danh mục" sortKey="category" sort={productSort} onSort={toggleSort(setProductSort)} />
+                      <SortHeader label="Giá" sortKey="price" sort={productSort} onSort={toggleSort(setProductSort)} />
+                      <SortHeader label="Kho" sortKey="stock" sort={productSort} onSort={toggleSort(setProductSort)} />
                       <th className="px-6 py-4">Thao tác</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {products.map(product => (
+                    {sortedProducts.map(product => (
                       <tr key={product.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
@@ -711,17 +1076,17 @@ export const AdminDashboard = () => {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500 font-medium">
                     <tr>
-                      <th className="px-3 py-3 whitespace-nowrap">Mã đơn</th>
-                      <th className="px-3 py-3 whitespace-nowrap">Khách hàng</th>
-                      <th className="px-3 py-3 whitespace-nowrap">Ngày đặt</th>
-                      <th className="px-3 py-3 whitespace-nowrap text-right">Tổng tiền</th>
-                      <th className="px-3 py-3 whitespace-nowrap">TT</th>
+                      <SortHeaderSm label="Mã đơn" sortKey="id" sort={orderSort} onSort={toggleSort(setOrderSort)} />
+                      <SortHeaderSm label="Khách hàng" sortKey="customer" sort={orderSort} onSort={toggleSort(setOrderSort)} />
+                      <SortHeaderSm label="Ngày đặt" sortKey="created_at" sort={orderSort} onSort={toggleSort(setOrderSort)} />
+                      <SortHeaderSm label="Tổng tiền" sortKey="total" sort={orderSort} onSort={toggleSort(setOrderSort)} className="text-right" />
+                      <SortHeaderSm label="TT" sortKey="payment" sort={orderSort} onSort={toggleSort(setOrderSort)} />
                       <th className="px-3 py-3 whitespace-nowrap">Vận đơn</th>
-                      <th className="px-3 py-3 whitespace-nowrap">Trạng thái</th>
+                      <SortHeaderSm label="Trạng thái" sortKey="status" sort={orderSort} onSort={toggleSort(setOrderSort)} />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {orders.map(order => (
+                    {sortedOrders.map(order => (
                       <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-3 py-3 font-mono text-slate-500 whitespace-nowrap">#ORD-{order.id}</td>
                         <td className="px-3 py-3">
@@ -745,17 +1110,7 @@ export const AdminDashboard = () => {
                           )}
                         </td>
                         <td className="px-3 py-3 whitespace-nowrap">
-                          <select
-                            value={order.status}
-                            onChange={(e) => handleUpdateOrderStatus(order.id, e.target.value)}
-                            className={`text-xs font-semibold border rounded px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 transition-all ${STATUS_STYLES[order.status]?.bg || ''} ${STATUS_STYLES[order.status]?.text || ''}`}
-                          >
-                            <option value="pending">Chờ xử lý</option>
-                            <option value="processing">Đang xử lý</option>
-                            <option value="shipped">Đang giao</option>
-                            <option value="delivered">Đã giao</option>
-                            <option value="cancelled">Đã hủy</option>
-                          </select>
+                          <OrderStatusDropdown status={order.status} onChange={(s) => handleUpdateOrderStatus(order.id, s)} />
                         </td>
                       </tr>
                     ))}
@@ -859,6 +1214,158 @@ export const AdminDashboard = () => {
             </div>
           )}
 
+          {/* ============ CHAT TAB ============ */}
+          {activeTab === 'chat' && (
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden" style={{ height: '70vh' }}>
+              <div className="flex h-full">
+                {/* Conversation list */}
+                <div className="w-80 border-r border-slate-100 flex flex-col shrink-0">
+                  <div className="p-4 border-b border-slate-100">
+                    <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                      <MessageCircle className="w-4 h-4 text-indigo-600" />
+                      Tin nhắn
+                      {totalChatUnread > 0 && (
+                        <span className="text-[10px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">{totalChatUnread}</span>
+                      )}
+                    </h3>
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    {chatConversations.length === 0 && (
+                      <div className="p-6 text-center text-slate-400 text-sm">Chưa có cuộc hội thoại nào</div>
+                    )}
+                    {chatConversations.map(conv => (
+                      <button
+                        key={conv.id}
+                        onClick={() => handleSelectConv(conv)}
+                        className={`w-full px-4 py-3 text-left hover:bg-slate-50 transition-colors border-b border-slate-50 ${selectedConv?.id === conv.id ? 'bg-indigo-50 border-l-2 border-l-indigo-600' : ''}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white font-bold text-xs shrink-0 overflow-hidden">
+                            {conv.user_avatar
+                              ? <img src={conv.user_avatar} alt="" className="w-full h-full object-cover rounded-full" />
+                              : (conv.user_name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-semibold text-slate-800 truncate">{conv.user_name || `User #${conv.user_id}`}</span>
+                              {conv.last_message_at && (
+                                <span className="text-[10px] text-slate-400 shrink-0 ml-2">{chatFormatDate(conv.last_message_at)}</span>
+                              )}
+                            </div>
+                            <div className="flex items-center justify-between mt-0.5">
+                              <p className="text-xs text-slate-500 truncate">{conv.last_message || 'Chưa có tin nhắn'}</p>
+                              {(conv.unread_count || 0) > 0 && (
+                                <span className="w-5 h-5 bg-indigo-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center shrink-0 ml-2">
+                                  {conv.unread_count! > 9 ? '9+' : conv.unread_count}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {conv.status === 'closed' && (
+                          <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded mt-1 inline-block">Đã đóng</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Chat area */}
+                <div className="flex-1 flex flex-col min-w-0">
+                  {!selectedConv ? (
+                    <div className="flex-1 flex items-center justify-center text-slate-400">
+                      <div className="text-center">
+                        <MessageCircle className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                        <p className="text-sm">Chọn cuộc hội thoại để bắt đầu</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Chat header */}
+                      <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white font-bold text-xs overflow-hidden">
+                            {selectedConv.user_avatar
+                              ? <img src={selectedConv.user_avatar} alt="" className="w-full h-full object-cover rounded-full" />
+                              : (selectedConv.user_name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <span className="text-sm font-semibold text-slate-800">{selectedConv.user_name || `User #${selectedConv.user_id}`}</span>
+                            <p className="text-[10px] text-slate-400">{selectedConv.user_email}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {selectedConv.status === 'open' && (
+                            <button
+                              onClick={() => handleCloseConv(selectedConv.id)}
+                              className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            >
+                              Đóng hội thoại
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Messages */}
+                      <div ref={chatMessagesContainerRef} className="flex-1 overflow-y-auto px-5 py-3 space-y-1 bg-slate-50/50">
+                        {chatMessages.length === 0 && (
+                          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                            Chưa có tin nhắn
+                          </div>
+                        )}
+                        {chatMessages.map((msg) => {
+                          const isAdmin = msg.sender_role === 'admin';
+                          return (
+                            <div key={msg.id} className={`flex mb-2 ${isAdmin ? 'justify-end' : 'justify-start'}`}>
+                              <div className="max-w-[70%]">
+                                <span className={`text-[10px] text-slate-400 font-medium mb-0.5 block ${isAdmin ? 'text-right mr-1' : 'ml-1'}`}>
+                                  {msg.sender_name}
+                                </span>
+                                <div className={`px-3.5 py-2 rounded-2xl text-sm leading-relaxed break-words ${
+                                  isAdmin
+                                    ? 'bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-br-md'
+                                    : 'bg-white text-slate-700 border border-slate-200 rounded-bl-md shadow-sm'
+                                }`}>
+                                  {msg.content}
+                                </div>
+                                <span className={`text-[10px] text-slate-400 mt-0.5 block ${isAdmin ? 'text-right mr-1' : 'ml-1'}`}>
+                                  {chatFormatTime(msg.created_at)}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Input */}
+                      <div className="px-5 py-3 border-t border-slate-100 bg-white shrink-0">
+                        <div className="flex items-end gap-2">
+                          <textarea
+                            ref={chatInputRef}
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChatMessage(); } }}
+                            placeholder="Nhập tin nhắn phản hồi..."
+                            rows={1}
+                            className="flex-1 resize-none bg-slate-100 rounded-xl px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white border border-transparent focus:border-indigo-300 transition-all max-h-20"
+                            style={{ minHeight: '40px' }}
+                          />
+                          <button
+                            onClick={handleSendChatMessage}
+                            disabled={!chatInput.trim() || chatSending}
+                            className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-indigo-500/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                          >
+                            <Send className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Modals */}
           <AnimatePresence>
             {editingProduct && (
@@ -891,7 +1398,11 @@ export const AdminDashboard = () => {
                       <input 
                         type="text"
                         value={editingProduct.name}
-                        onChange={e => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                        onChange={e => {
+                          const name = e.target.value;
+                          const slug = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                          setEditingProduct({ ...editingProduct, name, slug });
+                        }}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                         required
                       />
@@ -901,7 +1412,7 @@ export const AdminDashboard = () => {
                       <input 
                         type="number"
                         value={editingProduct.price}
-                        onChange={e => setEditingProduct({ ...editingProduct, price: parseFloat(e.target.value) })}
+                        onChange={e => setEditingProduct({ ...editingProduct, price: parseInt(e.target.value) || 0 })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                         required
                       />
@@ -911,7 +1422,7 @@ export const AdminDashboard = () => {
                       <input 
                         type="number"
                         value={editingProduct.stock}
-                        onChange={e => setEditingProduct({ ...editingProduct, stock: parseInt(e.target.value) })}
+                        onChange={e => setEditingProduct({ ...editingProduct, stock: parseInt(e.target.value) || 0 })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                         required
                       />
@@ -939,7 +1450,7 @@ export const AdminDashboard = () => {
                     </div>
                     <div>
                       <ImageUpload 
-                        endpoint="/api/admin/upload-product-image"
+                        endpoint="/api/upload/product"
                         fieldName="image"
                         currentImage={editingProduct.image_url}
                         onUploadSuccess={url => setEditingProduct({ ...editingProduct, image_url: url })}
@@ -995,7 +1506,11 @@ export const AdminDashboard = () => {
                       <input 
                         type="text"
                         value={editingCategory.name}
-                        onChange={e => setEditingCategory({ ...editingCategory, name: e.target.value })}
+                        onChange={e => {
+                          const name = e.target.value;
+                          const slug = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                          setEditingCategory({ ...editingCategory, name, slug });
+                        }}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                         required
                       />

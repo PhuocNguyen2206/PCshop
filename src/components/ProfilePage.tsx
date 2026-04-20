@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
-import { Mail, Shield, Calendar, Phone, Check } from 'lucide-react';
+import { useState } from 'react';
+import { Mail, Shield, Calendar, Phone, Check, Edit2, User as UserIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAuth } from '../AuthContext';
 import { ImageUpload } from './ImageUpload';
 
 export const ProfilePage = () => {
-  const { user, updateAvatar, updatePhone, authHeaders } = useAuth();
+  const { user, updateAvatar, updatePhone, updateName, authHeaders } = useAuth();
   const [phone, setPhone] = useState(user?.phone || '');
   const [editingPhone, setEditingPhone] = useState(false);
+  const [name, setName] = useState(user?.name || '');
+  const [editingName, setEditingName] = useState(false);
   const [saving, setSaving] = useState(false);
 
   if (!user) return null;
@@ -27,7 +29,21 @@ export const ProfilePage = () => {
     } catch {} finally { setSaving(false); }
   };
 
-  if (!user) return null;
+  const handleSaveName = async () => {
+    if (!name.trim() || name.trim().length < 2) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/auth/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (res.ok) {
+        updateName(name.trim());
+        setEditingName(false);
+      }
+    } catch {} finally { setSaving(false); }
+  };
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-12">
@@ -54,15 +70,26 @@ export const ProfilePage = () => {
                 label=""
               />
             <div className="text-center sm:text-left pb-2">
-              <h1 className="text-2xl font-black text-slate-900">{user.name}</h1>
-              <span className={`inline-flex items-center gap-1.5 mt-1 px-3 py-1 rounded-full text-xs font-semibold ${
-                user.role === 'admin' 
-                  ? 'bg-indigo-100 text-indigo-700' 
-                  : 'bg-slate-100 text-slate-600'
-              }`}>
-                <Shield className="w-3 h-3" />
-                {user.role === 'admin' ? 'Quản trị viên' : 'Khách hàng'}
-              </span>
+              {editingName ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    autoFocus
+                    className="text-2xl font-black text-slate-900 bg-white border border-slate-200 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 w-56"
+                    onKeyDown={e => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') { setEditingName(false); setName(user.name); } }}
+                  />
+                  <button onClick={handleSaveName} disabled={saving} className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                    <Check className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <h1 className="text-2xl font-black text-slate-900 group cursor-pointer inline-flex items-center gap-2" onClick={() => setEditingName(true)}>
+                  {user.name}
+                  <Edit2 className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </h1>
+              )}
             </div>
           </div>
         </div>

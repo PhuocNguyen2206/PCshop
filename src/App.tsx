@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CartProvider } from './CartContext';
 import { AuthProvider, useAuth } from './AuthContext';
@@ -9,10 +9,12 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { AuthModal } from './components/AuthModal';
 import { OrderHistory } from './components/OrderHistory';
 import { ProfilePage } from './components/ProfilePage';
+import { ProductsPage } from './components/ProductsPage';
+import { ChatWidget } from './components/ChatWidget';
 import { ToastProvider } from './components/Toast';
 
 const AppContent = () => {
-  const [view, setView] = useState<'store' | 'admin' | 'product' | 'orders' | 'profile'>('store');
+  const [view, setView] = useState<'store' | 'admin' | 'product' | 'products' | 'orders' | 'profile'>('store');
   const [selectedProductSlug, setSelectedProductSlug] = useState<string | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const { user } = useAuth();
@@ -50,6 +52,11 @@ const AppContent = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleViewProducts = () => {
+    setView('products');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <div className="min-h-screen bg-white font-sans flex flex-col">
       <Navbar 
@@ -59,13 +66,14 @@ const AppContent = () => {
         onAuthOpen={() => setIsAuthOpen(true)}
         onViewOrders={handleViewOrders}
         onViewProfile={handleViewProfile}
+        onViewProducts={handleViewProducts}
       />
 
       <main className="flex-1">
         <AnimatePresence mode="wait">
           {view === 'store' && (
             <motion.div key="store" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-              <UserStore onProductClick={handleProductClick} onAuthOpen={() => setIsAuthOpen(true)} />
+              <UserStore onProductClick={handleProductClick} onAuthOpen={() => setIsAuthOpen(true)} onViewProducts={handleViewProducts} />
             </motion.div>
           )}
           {view === 'product' && selectedProductSlug && (
@@ -76,6 +84,11 @@ const AppContent = () => {
           {view === 'admin' && user?.role === 'admin' && (
             <motion.div key="admin" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
               <AdminDashboard />
+            </motion.div>
+          )}
+          {view === 'products' && (
+            <motion.div key="products" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+              <ProductsPage onProductClick={handleProductClick} onAuthOpen={() => setIsAuthOpen(true)} />
             </motion.div>
           )}
           {view === 'orders' && (
@@ -92,6 +105,7 @@ const AppContent = () => {
       </main>
 
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
+      <ChatWidget onAuthOpen={() => setIsAuthOpen(true)} />
 
       <footer className="bg-slate-950 text-slate-400 pt-16 pb-8 mt-24 relative overflow-hidden">
         {/* Decorative gradient */}

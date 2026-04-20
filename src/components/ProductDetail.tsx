@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ShoppingCart, ChevronRight, Shield, RotateCcw, Truck, ArrowLeft, Zap, Star, Package, Check } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ShoppingCart, Shield, RotateCcw, Truck, ArrowLeft, Star, Package, Check } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useCart } from '../CartContext';
 import { useAuth } from '../AuthContext';

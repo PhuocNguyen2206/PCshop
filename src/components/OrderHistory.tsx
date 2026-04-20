@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Package, ChevronDown, ChevronUp, ExternalLink, Clock, CheckCircle2, Truck, BoxIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../AuthContext';
@@ -43,7 +43,7 @@ export const OrderHistory = () => {
       .catch(() => setLoading(false));
   }, []);
 
-  // Polling: cập nhật đơn hàng mỗi 8 giây
+  // Polling: cập nhật đơn hàng mỗi 30 giây
   useEffect(() => {
     const interval = setInterval(() => {
       fetch('/api/orders/my', { headers: authHeaders() })
@@ -59,7 +59,7 @@ export const OrderHistory = () => {
           }
         })
         .catch(() => {});
-    }, 8000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [expandedId]);
 

@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { ShoppingCart, LayoutDashboard, Package, ShoppingBag, LogOut, LogIn, ClipboardList, Cpu, UserCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ShoppingCart, LayoutDashboard, ShoppingBag, LogOut, LogIn, ClipboardList, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../CartContext';
 import { useAuth } from '../AuthContext';
 import { CartDrawer } from './CartDrawer';
 
-export const Navbar = ({ onAdminToggle, isAdmin, onBackToStore, onAuthOpen, onViewOrders, onViewProfile }: { onAdminToggle: () => void, isAdmin: boolean, onBackToStore: () => void, onAuthOpen: () => void, onViewOrders: () => void, onViewProfile: () => void }) => {
+export const Navbar = ({ onAdminToggle, isAdmin, onBackToStore, onAuthOpen, onViewOrders, onViewProfile, onViewProducts }: { onAdminToggle: () => void, isAdmin: boolean, onBackToStore: () => void, onAuthOpen: () => void, onViewOrders: () => void, onViewProfile: () => void, onViewProducts: () => void }) => {
   const { items } = useCart();
   const { user, logout, isAuthenticated } = useAuth();
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -37,7 +37,7 @@ export const Navbar = ({ onAdminToggle, isAdmin, onBackToStore, onAuthOpen, onVi
             <div className="hidden md:flex items-center gap-1 text-sm font-medium text-slate-500">
               <motion.button 
                 whileHover={{ y: -1 }}
-                onClick={onBackToStore} 
+                onClick={onViewProducts} 
                 className="px-3.5 py-2 rounded-xl hover:text-indigo-600 hover:bg-indigo-50/80 transition-all duration-200"
               >
                 Sản phẩm

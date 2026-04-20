@@ -33,7 +33,6 @@ export interface Order {
   customer_phone?: string | null;
   shipping_address?: string | null;
   total_amount: number;
-  prepaid_amount?: number;
   payment_status?: 'paid' | 'unpaid';
   status: string;
   tracking_code: string | null;
@@ -43,15 +42,33 @@ export interface Order {
   updated_at?: string;
 }
 
-export interface OrderItem {
-  id: number;
-  order_id: number;
-  product_id: number;
-  product_name?: string;
-  quantity: number;
-  price: number;
-}
-
 export interface CartItem extends Product {
   quantity: number;
+}
+
+export interface Conversation {
+  id: number;
+  user_id: number;
+  subject: string;
+  status: 'open' | 'closed';
+  user_name?: string;
+  user_email?: string;
+  user_avatar?: string | null;
+  unread_count?: number;
+  last_message?: string | null;
+  last_message_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Message {
+  id: number;
+  conversation_id: number;
+  sender_id: number;
+  content: string;
+  is_read: boolean;
+  sender_name: string;
+  sender_role: string;
+  sender_avatar?: string | null;
+  created_at: string;
 }

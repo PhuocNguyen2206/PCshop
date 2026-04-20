@@ -1,4 +1,3 @@
-import React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface PaginationInfo {
@@ -16,7 +15,7 @@ interface PaginationProps {
 }
 
 export const Pagination = ({ pagination, onPageChange }: PaginationProps) => {
-  const { currentPage, totalPages, totalItems } = pagination;
+  const { currentPage, totalPages } = pagination;
 
   if (totalPages <= 1) return null;
 
@@ -48,7 +47,7 @@ export const Pagination = ({ pagination, onPageChange }: PaginationProps) => {
 
   const handlePageChange = (page: number) => {
     onPageChange(page);
-    window.scrollTo({ top: document.getElementById('products')?.offsetTop || 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (

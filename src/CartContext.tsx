@@ -13,39 +13,47 @@ interface CartContextType {
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
-const CART_KEY_PREFIX = 'pcmaster_cart_';
-
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, authHeaders } = useAuth();
   const [items, setItems] = useState<CartItem[]>([]);
-  const isLoadedRef = React.useRef(false);
 
-  // Load giỏ hàng từ localStorage khi user thay đổi
-  useEffect(() => {
-    if (user) {
-      const saved = localStorage.getItem(CART_KEY_PREFIX + user.id);
-      setItems(saved ? JSON.parse(saved) : []);
-    } else {
-      setItems([]);
+  // Load giỏ hàng từ DB khi user thay đổi
+  const loadCart = useCallback(async () => {
+    if (!user) { setItems([]); return; }
+    try {
+      const res = await fetch('/api/cart', { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setItems(data);
+      }
+    } catch (e) {
+      console.error('Failed to load cart:', e);
     }
-    // Đánh dấu đã load xong, cho phép save
-    isLoadedRef.current = true;
-    return () => { isLoadedRef.current = false; };
-  }, [user]);
+  }, [user, authHeaders]);
 
-  // Lưu giỏ hàng vào localStorage mỗi khi items thay đổi (chỉ sau khi đã load)
-  useEffect(() => {
-    if (user && isLoadedRef.current) {
-      localStorage.setItem(CART_KEY_PREFIX + user.id, JSON.stringify(items));
-    }
-  }, [items, user]);
+  useEffect(() => { loadCart(); }, [loadCart]);
 
   const addToCart = (product: Product) => {
     setItems(prev => {
       const existing = prev.find(item => item.id === product.id);
+      let newQty: number;
       if (existing) {
-        return prev.map(item => 
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        if (existing.quantity >= product.stock) return prev;
+        newQty = existing.quantity + 1;
+      } else {
+        if (product.stock <= 0) return prev;
+        newQty = 1;
+      }
+      // Sync to DB
+      fetch('/api/cart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ product_id: product.id, quantity: newQty }),
+      }).catch(console.error);
+
+      if (existing) {
+        return prev.map(item =>
+          item.id === product.id ? { ...item, quantity: newQty } : item
         );
       }
       return [...prev, { ...product, quantity: 1 }];
@@ -54,6 +62,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const removeFromCart = (productId: number) => {
     setItems(prev => prev.filter(item => item.id !== productId));
+    fetch(`/api/cart/${productId}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).catch(console.error);
   };
 
   const updateQuantity = (productId: number, quantity: number) => {
@@ -61,12 +73,25 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       removeFromCart(productId);
       return;
     }
-    setItems(prev => prev.map(item => 
-      item.id === productId ? { ...item, quantity } : item
+    setItems(prev => prev.map(item =>
+      item.id === productId ? { ...item, quantity: Math.min(quantity, item.stock) } : item
     ));
+    const item = items.find(i => i.id === productId);
+    const finalQty = item ? Math.min(quantity, item.stock) : quantity;
+    fetch('/api/cart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ product_id: productId, quantity: finalQty }),
+    }).catch(console.error);
   };
 
-  const clearCart = () => setItems([]);
+  const clearCart = () => {
+    setItems([]);
+    fetch('/api/cart', {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).catch(console.error);
+  };
 
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
