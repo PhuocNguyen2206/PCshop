@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Package, ShoppingBag, User as UserIcon, Plus, Edit2, Trash2, X, ChevronDown, ChevronUp, DollarSign, Cpu, FolderOpen, AlertTriangle, ArrowUpDown, Check, MessageCircle, Send } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingBag, User as UserIcon, Plus, Edit2, Trash2, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, DollarSign, Cpu, FolderOpen, AlertTriangle, ArrowUpDown, Check, MessageCircle, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { format, subDays } from 'date-fns';
@@ -85,6 +85,39 @@ const OrderStatusDropdown = ({ status, onChange }: { status: string; onChange: (
   );
 };
 
+const ADMIN_PAGE_SIZE = 10;
+
+const AdminPager = ({ page, total, onChange }: { page: number; total: number; onChange: (p: number) => void }) => {
+  const totalPages = Math.ceil(total / ADMIN_PAGE_SIZE);
+  if (totalPages <= 1) return null;
+  const pages: (number | '...')[] = [];
+  pages.push(1);
+  if (page > 3) pages.push('...');
+  for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+  if (page < totalPages - 2) pages.push('...');
+  if (totalPages > 1) pages.push(totalPages);
+  return (
+    <div className="flex items-center justify-between px-6 py-3 border-t border-slate-100 bg-slate-50/50">
+      <span className="text-xs text-slate-500">
+        {(page - 1) * ADMIN_PAGE_SIZE + 1}–{Math.min(page * ADMIN_PAGE_SIZE, total)} trong <span className="font-semibold">{total}</span>
+      </span>
+      <div className="flex items-center gap-1">
+        <button disabled={page === 1} onClick={() => onChange(page - 1)} className="p-1.5 rounded-lg disabled:opacity-30 hover:bg-slate-200 transition-colors">
+          <ChevronLeft className="w-4 h-4 text-slate-600" />
+        </button>
+        {pages.map((p, i) => p === '...' ? (
+          <span key={`e${i}`} className="w-7 h-7 flex items-center justify-center text-slate-400 text-xs">…</span>
+        ) : (
+          <button key={p} onClick={() => onChange(p as number)} className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${p === page ? 'bg-indigo-600 text-white' : 'hover:bg-slate-200 text-slate-600'}`}>{p}</button>
+        ))}
+        <button disabled={page === totalPages} onClick={() => onChange(page + 1)} className="p-1.5 rounded-lg disabled:opacity-30 hover:bg-slate-200 transition-colors">
+          <ChevronRight className="w-4 h-4 text-slate-600" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 type SortDir = 'asc' | 'desc';
 type SortConfig = { key: string; dir: SortDir };
 
@@ -143,6 +176,9 @@ export const AdminDashboard = () => {
   const [realtimeOrders, setRealtimeOrders] = useState<any[]>([]);
   const [productSort, setProductSort] = useState<SortConfig>({ key: 'name', dir: 'asc' });
   const [orderSort, setOrderSort] = useState<SortConfig>({ key: 'created_at', dir: 'desc' });
+  const [productPage, setProductPage] = useState(1);
+  const [orderPage, setOrderPage] = useState(1);
+  const [userPage, setUserPage] = useState(1);
   
   const { authHeaders } = useAuth();
   const { toast, confirm } = useToast();
@@ -159,8 +195,9 @@ export const AdminDashboard = () => {
   const chatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatPollErrorCount = useRef(0);
 
-  const toggleSort = (setter: React.Dispatch<React.SetStateAction<SortConfig>>) => (key: string) => {
+  const toggleSort = (setter: React.Dispatch<React.SetStateAction<SortConfig>>, resetPage?: () => void) => (key: string) => {
     setter(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+    resetPage?.();
   };
 
   const sortedProducts = [...products].sort((a, b) => {
@@ -186,6 +223,10 @@ export const AdminDashboard = () => {
       default: return 0;
     }
   });
+
+  const paginatedProducts = sortedProducts.slice((productPage - 1) * ADMIN_PAGE_SIZE, productPage * ADMIN_PAGE_SIZE);
+  const paginatedOrders = sortedOrders.slice((orderPage - 1) * ADMIN_PAGE_SIZE, orderPage * ADMIN_PAGE_SIZE);
+  const paginatedUsers = users.slice((userPage - 1) * ADMIN_PAGE_SIZE, userPage * ADMIN_PAGE_SIZE);
 
   // Helper: Calculate start/end dates based on time range
   const getDateRange = () => {
@@ -300,7 +341,7 @@ export const AdminDashboard = () => {
     const headers = authHeaders();
     fetch('/api/admin/stats', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setStats).catch(() => toast.error('Không tải được thống kê'));
     fetch('/api/admin/orders', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setOrders).catch(() => toast.error('Không tải được đơn hàng'));
-    fetch('/api/products?limit=1000').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(r => setProducts(r.data || r)).catch(() => toast.error('Không tải được sản phẩm'));
+    fetch('/api/admin/products', { headers: authHeaders() }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(r => setProducts(Array.isArray(r) ? r : (r.data || r))).catch(() => toast.error('Không tải được sản phẩm'));
     fetch('/api/categories').then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setCategories).catch(() => toast.error('Không tải được danh mục'));
     fetch('/api/admin/users', { headers }).then(res => { if (!res.ok) throw new Error(); return res.json(); }).then(setUsers).catch(() => toast.error('Không tải được người dùng'));
     
@@ -312,6 +353,7 @@ export const AdminDashboard = () => {
     
     return () => {
       if (sseRef.current) sseRef.current.close();
+      if (chatPollRef.current) clearInterval(chatPollRef.current);
     };
   }, []);
 
@@ -1012,7 +1054,10 @@ export const AdminDashboard = () => {
           {activeTab === 'products' && (
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="font-bold text-slate-900">Danh sách sản phẩm</h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="font-bold text-slate-900">Danh sách sản phẩm</h3>
+                  <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-full">{products.length}</span>
+                </div>
                 <button 
                   onClick={() => setEditingProduct({ id: 0, name: '', slug: '', description: '', price: 0, stock: 0, image_url: 'https://picsum.photos/seed/pc/400/400', category_id: categories[0]?.id || 1, category_name: '' })}
                   className="px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
@@ -1024,15 +1069,15 @@ export const AdminDashboard = () => {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 font-medium">
                     <tr>
-                      <SortHeader label="Sản phẩm" sortKey="name" sort={productSort} onSort={toggleSort(setProductSort)} />
-                      <SortHeader label="Danh mục" sortKey="category" sort={productSort} onSort={toggleSort(setProductSort)} />
-                      <SortHeader label="Giá" sortKey="price" sort={productSort} onSort={toggleSort(setProductSort)} />
-                      <SortHeader label="Kho" sortKey="stock" sort={productSort} onSort={toggleSort(setProductSort)} />
+                      <SortHeader label="Sản phẩm" sortKey="name" sort={productSort} onSort={toggleSort(setProductSort, () => setProductPage(1))} />
+                      <SortHeader label="Danh mục" sortKey="category" sort={productSort} onSort={toggleSort(setProductSort, () => setProductPage(1))} />
+                      <SortHeader label="Giá" sortKey="price" sort={productSort} onSort={toggleSort(setProductSort, () => setProductPage(1))} />
+                      <SortHeader label="Kho" sortKey="stock" sort={productSort} onSort={toggleSort(setProductSort, () => setProductPage(1))} />
                       <th className="px-6 py-4">Thao tác</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {sortedProducts.map(product => (
+                    {paginatedProducts.map(product => (
                       <tr key={product.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
@@ -1064,29 +1109,33 @@ export const AdminDashboard = () => {
                   </tbody>
                 </table>
               </div>
+              <AdminPager page={productPage} total={sortedProducts.length} onChange={setProductPage} />
             </div>
           )}
 
           {activeTab === 'orders' && (
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-slate-100">
-                <h3 className="font-bold text-slate-900">Tất cả đơn hàng</h3>
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  <h3 className="font-bold text-slate-900">Tất cả đơn hàng</h3>
+                  <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-600 text-xs font-bold rounded-full">{orders.length}</span>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500 font-medium">
                     <tr>
-                      <SortHeaderSm label="Mã đơn" sortKey="id" sort={orderSort} onSort={toggleSort(setOrderSort)} />
-                      <SortHeaderSm label="Khách hàng" sortKey="customer" sort={orderSort} onSort={toggleSort(setOrderSort)} />
-                      <SortHeaderSm label="Ngày đặt" sortKey="created_at" sort={orderSort} onSort={toggleSort(setOrderSort)} />
-                      <SortHeaderSm label="Tổng tiền" sortKey="total" sort={orderSort} onSort={toggleSort(setOrderSort)} className="text-right" />
-                      <SortHeaderSm label="TT" sortKey="payment" sort={orderSort} onSort={toggleSort(setOrderSort)} />
+                      <SortHeaderSm label="Mã đơn" sortKey="id" sort={orderSort} onSort={toggleSort(setOrderSort, () => setOrderPage(1))} />
+                      <SortHeaderSm label="Khách hàng" sortKey="customer" sort={orderSort} onSort={toggleSort(setOrderSort, () => setOrderPage(1))} />
+                      <SortHeaderSm label="Ngày đặt" sortKey="created_at" sort={orderSort} onSort={toggleSort(setOrderSort, () => setOrderPage(1))} />
+                      <SortHeaderSm label="Tổng tiền" sortKey="total" sort={orderSort} onSort={toggleSort(setOrderSort, () => setOrderPage(1))} className="text-right" />
+                      <SortHeaderSm label="TT" sortKey="payment" sort={orderSort} onSort={toggleSort(setOrderSort, () => setOrderPage(1))} />
                       <th className="px-3 py-3 whitespace-nowrap">Vận đơn</th>
-                      <SortHeaderSm label="Trạng thái" sortKey="status" sort={orderSort} onSort={toggleSort(setOrderSort)} />
+                      <SortHeaderSm label="Trạng thái" sortKey="status" sort={orderSort} onSort={toggleSort(setOrderSort, () => setOrderPage(1))} />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {sortedOrders.map(order => (
+                    {paginatedOrders.map(order => (
                       <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-3 py-3 font-mono text-slate-500 whitespace-nowrap">#ORD-{order.id}</td>
                         <td className="px-3 py-3">
@@ -1117,13 +1166,17 @@ export const AdminDashboard = () => {
                   </tbody>
                 </table>
               </div>
+              <AdminPager page={orderPage} total={sortedOrders.length} onChange={setOrderPage} />
             </div>
           )}
 
           {activeTab === 'users' && (
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-slate-100">
-                <h3 className="font-bold text-slate-900">Danh sách khách hàng</h3>
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  <h3 className="font-bold text-slate-900">Danh sách khách hàng</h3>
+                  <span className="px-2.5 py-0.5 bg-violet-50 text-violet-600 text-xs font-bold rounded-full">{users.length}</span>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -1136,7 +1189,7 @@ export const AdminDashboard = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {users.map(user => (
+                    {paginatedUsers.map(user => (
                       <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-medium text-slate-900">{user.name}</div>
@@ -1164,6 +1217,7 @@ export const AdminDashboard = () => {
                   </tbody>
                 </table>
               </div>
+              <AdminPager page={userPage} total={users.length} onChange={setUserPage} />
             </div>
           )}
 

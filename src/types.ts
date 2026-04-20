@@ -36,7 +36,6 @@ export interface Order {
   payment_status?: 'paid' | 'unpaid';
   status: string;
   tracking_code: string | null;
-  shipping_provider: string | null;
   shipped_at: string | null;
   created_at: string;
   updated_at?: string;

@@ -33,7 +33,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => { loadCart(); }, [loadCart]);
 
-  const addToCart = (product: Product) => {
+  const addToCart = useCallback((product: Product) => {
     setItems(prev => {
       const existing = prev.find(item => item.id === product.id);
       let newQty: number;
@@ -56,42 +56,42 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           item.id === product.id ? { ...item, quantity: newQty } : item
         );
       }
-      return [...prev, { ...product, quantity: 1 }];
+      return [...prev, { ...product, quantity: newQty }];
     });
-  };
+  }, [authHeaders]);
 
-  const removeFromCart = (productId: number) => {
+  const removeFromCart = useCallback((productId: number) => {
     setItems(prev => prev.filter(item => item.id !== productId));
     fetch(`/api/cart/${productId}`, {
       method: 'DELETE',
       headers: authHeaders(),
     }).catch(console.error);
-  };
+  }, [authHeaders]);
 
-  const updateQuantity = (productId: number, quantity: number) => {
+  const updateQuantity = useCallback((productId: number, quantity: number) => {
     if (quantity <= 0) {
       removeFromCart(productId);
       return;
     }
-    setItems(prev => prev.map(item =>
-      item.id === productId ? { ...item, quantity: Math.min(quantity, item.stock) } : item
-    ));
-    const item = items.find(i => i.id === productId);
-    const finalQty = item ? Math.min(quantity, item.stock) : quantity;
-    fetch('/api/cart', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ product_id: productId, quantity: finalQty }),
-    }).catch(console.error);
-  };
+    setItems(prev => {
+      const item = prev.find(i => i.id === productId);
+      const finalQty = item ? Math.min(quantity, item.stock) : quantity;
+      fetch('/api/cart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ product_id: productId, quantity: finalQty }),
+      }).catch(console.error);
+      return prev.map(i => i.id === productId ? { ...i, quantity: finalQty } : i);
+    });
+  }, [authHeaders, removeFromCart]);
 
-  const clearCart = () => {
+  const clearCart = useCallback(() => {
     setItems([]);
     fetch('/api/cart', {
       method: 'DELETE',
       headers: authHeaders(),
     }).catch(console.error);
-  };
+  }, [authHeaders]);
 
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 

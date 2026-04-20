@@ -109,9 +109,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (user) setUser({ ...user, name });
   };
 
-  const authHeaders = (): Record<string, string> => {
+  const authHeaders = useCallback((): Record<string, string> => {
     return token ? { 'Authorization': `Bearer ${token}` } : {};
-  };
+  }, [token]);
 
   const isAuthenticated = !!user;
 

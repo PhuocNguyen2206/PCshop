@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ShoppingCart, Shield, RotateCcw, Truck, ArrowLeft, Star, Package, Check } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useCart } from '../CartContext';
@@ -9,11 +9,13 @@ export const ProductDetail = ({ slug, onBack, onAuthOpen }: { slug: string, onBa
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [added, setAdded] = useState(false);
+  const addedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { addToCart } = useCart();
   const { isAuthenticated } = useAuth();
 
   useEffect(() => {
     setAdded(false);
+    if (addedTimerRef.current) clearTimeout(addedTimerRef.current);
     setLoading(true);
     fetch(`/api/products/${slug}`)
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
@@ -35,7 +37,8 @@ export const ProductDetail = ({ slug, onBack, onAuthOpen }: { slug: string, onBa
     }
     addToCart(product);
     setAdded(true);
-    setTimeout(() => setAdded(false), 1200);
+    if (addedTimerRef.current) clearTimeout(addedTimerRef.current);
+    addedTimerRef.current = setTimeout(() => setAdded(false), 1200);
   };
 
   if (loading) return (

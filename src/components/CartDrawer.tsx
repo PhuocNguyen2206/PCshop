@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ShoppingCart, X, Trash2, Plus, Minus, ChevronRight, Package, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../CartContext';
@@ -14,6 +14,9 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | null>(null);
   const { toast } = useToast();
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
 
   useEffect(() => {
     if (user) setCustomerInfo({ name: user.name, email: user.email, phone: user.phone || '', address: '' });
@@ -49,7 +52,8 @@ export const CartDrawer = ({ isOpen, onClose }: { isOpen: boolean, onClose: () =
         clearCart();
         setIsCheckingOut(false);
         setPaymentStatus(null);
-        setTimeout(() => { setOrderSuccess(false); onClose(); }, 4000);
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => { setOrderSuccess(false); onClose(); }, 4000);
         const statusText = status === 'paid' ? 'Thanh toán thành công!' : 'Đặt hàng thành công!';
         toast.success(statusText);
       } else {

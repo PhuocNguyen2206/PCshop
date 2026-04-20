@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus, Package, ShoppingCart, Search, SlidersHorizontal, X, ChevronDown, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../CartContext';
@@ -46,8 +46,18 @@ export const ProductsPage = ({ onProductClick, onAuthOpen }: { onProductClick: (
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const sortRef = useRef<HTMLDivElement>(null);
   const { addToCart } = useCart();
   const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (!sortOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) setSortOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [sortOpen]);
 
   const debouncedSearch = useDebounce(searchTerm, 500);
   const debouncedMinPrice = useDebounce(priceRange[0], 400);
@@ -170,10 +180,9 @@ export const ProductsPage = ({ onProductClick, onAuthOpen }: { onProductClick: (
           {hasActiveFilters && <span className="w-2 h-2 bg-indigo-500 rounded-full" />}
         </button>
 
-        <div className="relative">
+        <div ref={sortRef} className="relative">
           <button
             onClick={() => setSortOpen(!sortOpen)}
-            onBlur={() => setTimeout(() => setSortOpen(false), 150)}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 hover:border-slate-300 transition-all cursor-pointer"
           >
             <span className="text-slate-400">Sắp xếp:</span>

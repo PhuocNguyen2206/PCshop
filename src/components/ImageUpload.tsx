@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, X, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../AuthContext';
@@ -25,6 +25,8 @@ export const ImageUpload = ({ endpoint, fieldName, currentImage, onUploadSuccess
   const inputRef = useRef<HTMLInputElement>(null);
 
   const maxSizeBytes = maxSizeMB * 1024 * 1024;
+
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   const validateFile = (file: File): string | null => {
     if (!file.type.startsWith('image/')) return 'Vui lòng chọn file ảnh';
@@ -150,6 +152,7 @@ export const ImageUpload = ({ endpoint, fieldName, currentImage, onUploadSuccess
   };
 
   const clearPreview = () => {
+    if (preview) URL.revokeObjectURL(preview);
     setPreview(null);
     setSelectedFile(null);
     setError('');

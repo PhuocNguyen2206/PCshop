@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
-import { Package, ChevronDown, ChevronUp, ExternalLink, Clock, CheckCircle2, Truck, BoxIcon } from 'lucide-react';
+import { Package, ChevronDown, ChevronUp, Clock, CheckCircle2, Truck, BoxIcon, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../AuthContext';
 import { Order } from '../types';
@@ -24,7 +24,6 @@ interface TrackingData {
   timeline: { status: string; label: string; time: string | null; done: boolean }[];
   tracking_url: string | null;
   tracking_code: string | null;
-  shipping_provider: string | null;
 }
 
 export const OrderHistory = () => {
@@ -34,27 +33,29 @@ export const OrderHistory = () => {
   const [trackingData, setTrackingData] = useState<Record<number, TrackingData>>({});
   const [orderItems, setOrderItems] = useState<Record<number, any[]>>({});
   const [loadingDetail, setLoadingDetail] = useState<Record<number, boolean>>({});
-  const { authHeaders } = useAuth();
+  const { authHeaders, isAuthenticated } = useAuth();
 
   useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
     fetch('/api/orders/my', { headers: authHeaders() })
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(data => { setOrders(data); setLoading(false); })
       .catch(() => setLoading(false));
-  }, []);
+  }, [isAuthenticated]);
 
   // Polling: cập nhật đơn hàng mỗi 30 giây
   useEffect(() => {
+    const currentExpandedId = expandedId;
     const interval = setInterval(() => {
       fetch('/api/orders/my', { headers: authHeaders() })
         .then(res => { if (!res.ok) throw new Error(); return res.json(); })
         .then(data => {
           setOrders(data);
           // Re-fetch tracking cho đơn đang mở
-          if (expandedId) {
-            fetch(`/api/orders/${expandedId}/tracking`, { headers: authHeaders() })
+          if (currentExpandedId) {
+            fetch(`/api/orders/${currentExpandedId}/tracking`, { headers: authHeaders() })
               .then(res => res.json())
-              .then(t => setTrackingData(prev => ({ ...prev, [expandedId]: t })))
+              .then(t => setTrackingData(prev => ({ ...prev, [currentExpandedId]: t })))
               .catch(() => {});
           }
         })
@@ -182,6 +183,7 @@ export const OrderHistory = () => {
                                 processing: <BoxIcon className="w-4 h-4" />,
                                 shipped: <Truck className="w-4 h-4" />,
                                 delivered: <CheckCircle2 className="w-4 h-4" />,
+                                cancelled: <XCircle className="w-4 h-4" />,
                               };
                               return (
                                 <div key={step.status} className="flex gap-4 relative">
@@ -207,22 +209,7 @@ export const OrderHistory = () => {
                             })}
                           </div>
 
-                          {tracking.tracking_url && (
-                            <a
-                              href={tracking.tracking_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-700 mt-2"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                              Theo dõi trên {tracking.shipping_provider}
-                            </a>
-                          )}
-                          {tracking.shipping_provider === 'DEMO' && tracking.tracking_code && (
-                            <p className="text-[11px] text-slate-400 mt-2 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-                              🚀 Chế độ Demo — trạng thái tự chuyển: Đang xử lý → 30s → Đang giao → 60s → Đã giao
-                            </p>
-                          )}
+
                         </div>
                       )}
 

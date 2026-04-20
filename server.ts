@@ -122,7 +122,6 @@ async function initDatabase() {
       payment_status VARCHAR(50) DEFAULT 'unpaid',
       status VARCHAR(50) DEFAULT 'pending',
       tracking_code VARCHAR(255) DEFAULT NULL,
-      shipping_provider VARCHAR(100) DEFAULT NULL,
       shipped_at DATETIME DEFAULT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -164,6 +163,7 @@ async function initDatabase() {
   await createIndexIfNotExists('idx_order_items_order_id', 'CREATE INDEX idx_order_items_order_id ON order_items(order_id)');
   await createIndexIfNotExists('idx_order_items_product_id', 'CREATE INDEX idx_order_items_product_id ON order_items(product_id)');
   await createIndexIfNotExists('idx_products_category_id', 'CREATE INDEX idx_products_category_id ON products(category_id)');
+  await createIndexIfNotExists('idx_order_status_history_order_id', 'CREATE INDEX idx_order_status_history_order_id ON order_status_history(order_id)');
 
   // Seed dữ liệu mẫu nếu bảng trống
   const [catRows] = await pool.execute("SELECT COUNT(*) as count FROM categories") as any;
@@ -210,7 +210,6 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS conversations (
       id INT AUTO_INCREMENT PRIMARY KEY,
       user_id INT NOT NULL,
-      subject VARCHAR(255) DEFAULT 'Hỗ trợ khách hàng',
       status VARCHAR(20) DEFAULT 'open',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -368,7 +367,10 @@ async function startServer() {
       const user = { id: result.insertId, name: name.trim(), email: email.trim().toLowerCase(), phone: null, role: "user", avatar: null };
       const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
       res.status(201).json({ ...user, token });
-    } catch (error) {
+    } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        return res.status(400).json({ error: "Email này đã được đăng ký. Vui lòng dùng email khác." });
+      }
       res.status(400).json({ error: "Đăng ký thất bại. Vui lòng kiểm tra lại thông tin." });
     }
   });
@@ -506,8 +508,8 @@ async function startServer() {
     const limitNum = Math.min(50, Math.max(1, parseInt(limit as string) || 12));
     const offset = (pageNum - 1) * limitNum;
 
-    const countSQL = `SELECT COUNT(*) as total FROM products p JOIN categories c ON p.category_id = c.id ${whereSQL}`;
-    const dataSQL = `SELECT p.*, c.name as category_name FROM products p JOIN categories c ON p.category_id = c.id ${whereSQL} ORDER BY ${sortField} ${sortOrder} LIMIT ${limitNum} OFFSET ${offset}`;
+    const countSQL = `SELECT COUNT(*) as total FROM products p LEFT JOIN categories c ON p.category_id = c.id ${whereSQL}`;
+    const dataSQL = `SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ${whereSQL} ORDER BY ${sortField} ${sortOrder} LIMIT ${limitNum} OFFSET ${offset}`;
 
     const [countResult] = await db.execute(countSQL, params) as any;
     const totalItems = countResult[0].total;
@@ -534,7 +536,7 @@ async function startServer() {
 
   app.get("/api/products/:slug", async (req, res) => {
     try {
-      const [rows] = await db.execute("SELECT p.*, c.name as category_name FROM products p JOIN categories c ON p.category_id = c.id WHERE p.slug = ?", [req.params.slug]) as any;
+      const [rows] = await db.execute("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.slug = ?", [req.params.slug]) as any;
       if (rows[0]) {
         res.json(rows[0]);
       } else {
@@ -635,6 +637,9 @@ async function startServer() {
           [item.quantity, item.id]
         );
       }
+
+      // Xóa giỏ hàng của user sau khi đặt hàng thành công
+      await conn.execute("DELETE FROM cart_items WHERE user_id = ?", [authenticatedUser.id]);
 
       await conn.commit();
       // Ghi lịch sử trạng thái đơn hàng
@@ -777,29 +782,9 @@ async function startServer() {
       const endStr = new Date(endDate.getTime() + 24*3600*1000).toISOString().slice(0,10) + ' 00:00:00';
 
       const [newUsersRows] = await db.execute("SELECT DATE(created_at) as date, COUNT(*) as count FROM users WHERE created_at >= ? AND created_at < ? GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC", [startStr, endStr]) as any;
-      const [aovRows] = await db.execute("SELECT AVG(total_amount) as aov FROM orders WHERE created_at >= ? AND created_at < ?", [startStr, endStr]) as any;
+      const [aovRows] = await db.execute("SELECT AVG(total_amount) as aov FROM orders WHERE created_at >= ? AND created_at < ? AND status != 'cancelled'", [startStr, endStr]) as any;
       res.json({ newUsers: newUsersRows.map((r: any) => ({ date: r.date, count: r.count })), aov: Math.round(aovRows[0].aov || 0) });
     } catch (e) { console.error('User metrics error:', e); res.status(500).json({ error: 'Không lấy được user metrics' }); }
-  });
-
-  // Alerts: low-stock + traffic spike detection
-  app.get('/api/admin/alerts', authenticateToken, requireAdmin, async (req, res) => {
-    try {
-      const threshold = Math.max(0, parseInt((req.query.threshold as string) || '5'));
-      const [lowStock] = await db.execute("SELECT id, name, stock FROM products WHERE stock <= ? ORDER BY stock ASC LIMIT 50", [threshold]) as any;
-
-      // Simple traffic spike detection: compare last 5min vs avg per 5min over last 24h
-      const [last5] = await db.execute("SELECT COUNT(*) as cnt FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)") as any;
-      const [last24] = await db.execute("SELECT COUNT(*) as cnt FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)") as any;
-      const avgPer5 = (last24[0].cnt || 0) / 288; // 288 intervals of 5min in 24h
-      const spike = avgPer5 > 0 && (last5[0].cnt || 0) > (avgPer5 * 3);
-
-      const alerts: any[] = [];
-      if ((lowStock as any[]).length > 0) alerts.push({ type: 'low_stock', items: lowStock });
-      if (spike) alerts.push({ type: 'traffic_spike', last5min: last5[0].cnt || 0, avgPer5: Math.round(avgPer5) });
-
-      res.json({ alerts });
-    } catch (e) { res.status(500).json({ error: 'Không lấy được alerts' }); }
   });
 
   app.get("/api/admin/orders", authenticateToken, requireAdmin, async (req, res) => {
@@ -809,56 +794,6 @@ async function startServer() {
     } catch (e) {
       res.status(500).json({ error: 'Không lấy được đơn hàng' });
     }
-  });
-
-  // Admin: Xác nhận đơn hàng (manual)
-  app.post("/api/admin/orders/:id/confirm", authenticateToken, requireAdmin, async (req, res) => {
-    const orderId = req.params.id;
-    const [rows] = await db.execute("SELECT * FROM orders WHERE id = ?", [orderId]) as any;
-    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
-    if (rows[0].status !== "pending") {
-      return res.status(400).json({ error: "Chỉ có thể xác nhận đơn hàng đang chờ xử lý" });
-    }
-
-    // Keep the existing tracking code (auto-generated on order creation)
-    const trackingCode = rows[0].tracking_code;
-
-    await db.execute(
-      "UPDATE orders SET status = 'processing', shipping_provider = ? WHERE id = ?",
-      ["Manual", orderId]
-    );
-    try { await db.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'processing', ?)", [orderId, `Đã xác nhận - Mã vận đơn: ${trackingCode}`]); } catch {}
-
-    res.json({ tracking_code: trackingCode, message: "Đã xác nhận đơn hàng" });
-  });
-
-  // Admin: Hủy đơn hàng
-  app.post("/api/admin/orders/:id/cancel", authenticateToken, requireAdmin, async (req, res) => {
-    const orderId = req.params.id;
-    const [rows] = await db.execute("SELECT * FROM orders WHERE id = ?", [orderId]) as any;
-    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
-    if (rows[0].status !== "pending") {
-      return res.status(400).json({ error: "Chỉ có thể hủy đơn hàng đang chờ xử lý" });
-    }
-
-    // Hoàn trả stock (trong transaction)
-    const conn = await db.getConnection();
-    try {
-      await conn.beginTransaction();
-      const [items] = await conn.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", [orderId]) as any;
-      for (const item of items) {
-        await conn.execute("UPDATE products SET stock = stock + ? WHERE id = ?", [item.quantity, item.product_id]);
-      }
-      await conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", [orderId]);
-      try { await conn.execute("INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'cancelled', 'Đơn hàng đã bị hủy')", [orderId]); } catch {}
-      await conn.commit();
-    } catch (e) {
-      await conn.rollback();
-      throw e;
-    } finally {
-      conn.release();
-    }
-    res.json({ message: "Đã hủy đơn hàng & hoàn trả kho" });
   });
 
   // Admin: Cập nhật trạng thái đơn hàng thủ công
@@ -1128,6 +1063,17 @@ async function startServer() {
     }
   });
 
+  app.get("/api/admin/products", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const [rows] = await db.execute(
+        "SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.created_at DESC"
+      );
+      res.json(rows);
+    } catch (e) {
+      res.status(500).json({ error: 'Không lấy được sản phẩm' });
+    }
+  });
+
   app.post("/api/admin/products", authenticateToken, requireAdmin, async (req, res) => {
     const { name, slug, description, price, stock, image_url, category_id } = req.body;
     if (!name || !slug) return res.status(400).json({ error: "Tên và slug là bắt buộc" });
@@ -1340,7 +1286,7 @@ async function startServer() {
   app.get("/api/orders/:id/tracking", authenticateToken, async (req: express.Request, res: express.Response) => {
     try {
     const [rows] = await db.execute(
-      "SELECT id, status, tracking_code, shipping_provider, shipped_at, created_at FROM orders WHERE id = ? AND user_id = ?",
+      "SELECT id, status, tracking_code, shipped_at, created_at FROM orders WHERE id = ? AND user_id = ?",
       [req.params.id, (req as AuthenticatedRequest).user.id]
     ) as any;
     if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
@@ -1352,9 +1298,10 @@ async function startServer() {
     const statusIdx = statusOrder.indexOf(order.status);
 
     timeline.push({ status: "pending", label: "Đơn hàng đã đặt", time: order.created_at, done: true });
-    if (statusIdx >= 1) timeline.push({ status: "processing", label: "Đang xử lý & đóng gói", time: order.shipped_at, done: true });
-    if (statusIdx >= 2) timeline.push({ status: "shipped", label: "Đang vận chuyển", time: null, done: true });
+    if (statusIdx >= 1) timeline.push({ status: "processing", label: "Đang xử lý & đóng gói", time: null, done: true });
+    if (statusIdx >= 2) timeline.push({ status: "shipped", label: "Đang vận chuyển", time: order.shipped_at, done: true });
     if (statusIdx >= 3) timeline.push({ status: "delivered", label: "Đã giao hàng", time: null, done: true });
+    if (order.status === "cancelled") timeline.push({ status: "cancelled", label: "Đơn hàng đã hủy", time: null, done: true });
 
     // Thêm các bước chưa hoàn thành
     for (let i = statusIdx + 1; i < statusOrder.length; i++) {
@@ -1511,8 +1458,14 @@ async function startServer() {
   // Lấy tin nhắn + đánh dấu đã đọc
   app.get("/api/chat/conversations/:id/messages", authenticateToken, async (req: express.Request, res: express.Response) => {
     try {
-      const userId = (req as AuthenticatedRequest).user.id;
+      const userReq = (req as AuthenticatedRequest).user;
       const convId = req.params.id;
+      const [convCheck] = await db.execute(
+        "SELECT id FROM conversations WHERE id = ? AND (user_id = ? OR ? = 'admin')",
+        [convId, userReq.id, userReq.role]
+      ) as any;
+      if (!convCheck[0]) return res.status(403).json({ error: "Không có quyền truy cập hội thoại này" });
+      const userId = userReq.id;
       const [messages] = await db.execute(
         `SELECT m.*, u.name as sender_name, u.role as sender_role, u.avatar as sender_avatar
          FROM messages m JOIN users u ON m.sender_id = u.id
@@ -1533,13 +1486,19 @@ async function startServer() {
   // Gửi tin nhắn
   app.post("/api/chat/conversations/:id/messages", authenticateToken, async (req: express.Request, res: express.Response) => {
     try {
-      const userId = (req as AuthenticatedRequest).user.id;
+      const userReq = (req as AuthenticatedRequest).user;
       const convId = req.params.id;
       const { content } = req.body;
       if (!content || content.trim().length === 0) return res.status(400).json({ error: "Nội dung không được rỗng" });
       if (content.length > 2000) return res.status(400).json({ error: "Tin nhắn quá dài (tối đa 2000 ký tự)" });
+      const [convCheck] = await db.execute(
+        "SELECT id FROM conversations WHERE id = ? AND (user_id = ? OR ? = 'admin')",
+        [convId, userReq.id, userReq.role]
+      ) as any;
+      if (!convCheck[0]) return res.status(403).json({ error: "Không có quyền truy cập hội thoại này" });
+      const userId = userReq.id;
       // Reopen conversation if closed
-      await db.execute("UPDATE conversations SET status = 'open', updated_at = NOW() WHERE id = ?", [convId]);
+      await db.execute("UPDATE conversations SET status = 'open' WHERE id = ?", [convId]);
       const [result] = await db.execute(
         "INSERT INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)",
         [convId, userId, content.trim()]
@@ -1556,7 +1515,7 @@ async function startServer() {
   });
 
   // Admin đóng conversation
-  app.put("/api/chat/conversations/:id/close", authenticateToken, async (req: express.Request, res: express.Response) => {
+  app.put("/api/chat/conversations/:id/close", authenticateToken, requireAdmin, async (req: express.Request, res: express.Response) => {
     try {
       await db.execute("UPDATE conversations SET status = 'closed' WHERE id = ?", [req.params.id]);
       res.json({ success: true });
