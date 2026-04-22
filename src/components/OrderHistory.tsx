@@ -40,7 +40,7 @@ export const OrderHistory = () => {
     fetch('/api/orders/my', { headers: authHeaders() })
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(data => { setOrders(data); setLoading(false); })
-      .catch(() => setLoading(false));
+        .catch(err => { console.error('Failed to load orders:', err); setLoading(false); });
   }, [isAuthenticated]);
 
   // Polling: cập nhật đơn hàng mỗi 30 giây

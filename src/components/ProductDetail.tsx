@@ -26,7 +26,8 @@ export const ProductDetail = ({ slug, onBack, onAuthOpen }: { slug: string, onBa
       .catch(() => {
         setProduct(null);
         setLoading(false);
-      });
+        console.error('Failed to load product:', slug);
+        });
   }, [slug]);
 
   const handleAdd = () => {
@@ -124,7 +125,7 @@ export const ProductDetail = ({ slug, onBack, onAuthOpen }: { slug: string, onBa
 
             <div className="h-px bg-gradient-to-r from-slate-200 via-slate-100 to-transparent w-full mb-6" />
             
-            <p className="text-slate-500 leading-relaxed text-[15px]">
+            <p className="text-slate-500 leading-relaxed text-[15px] whitespace-pre-line break-words">
               {product.description}
             </p>
           </div>

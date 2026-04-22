@@ -416,7 +416,7 @@ export const ProductsPage = ({ onProductClick, onAuthOpen }: { onProductClick: (
 
                     <div className="p-5">
                       <h3 className="font-semibold text-slate-900 mb-1.5 line-clamp-1 group-hover:text-indigo-600 transition-colors duration-300">{product.name}</h3>
-                      <p className="text-sm text-slate-400 mb-4 line-clamp-2 min-h-[40px] leading-relaxed">{product.description}</p>
+                      <p className="text-sm text-slate-400 mb-4 line-clamp-2 min-h-[40px] leading-relaxed whitespace-pre-line break-words">{product.description}</p>
                       <div className="flex items-center justify-between">
                         <span className="text-lg font-extrabold text-slate-900">
                           {product.price.toLocaleString('vi-VN')}

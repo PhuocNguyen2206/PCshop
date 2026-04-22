@@ -454,7 +454,8 @@ async function startServer() {
          LEFT JOIN (order_items oi INNER JOIN orders o ON oi.order_id = o.id AND o.status != 'cancelled') ON oi.product_id = p.id
          GROUP BY p.id
          ORDER BY total_sold DESC, p.created_at DESC
-         LIMIT ${limit}`
+        LIMIT ?`,
+        [limit]
       ) as any;
       res.json(rows);
     } catch (e) {
@@ -509,13 +510,13 @@ async function startServer() {
     const offset = (pageNum - 1) * limitNum;
 
     const countSQL = `SELECT COUNT(*) as total FROM products p LEFT JOIN categories c ON p.category_id = c.id ${whereSQL}`;
-    const dataSQL = `SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ${whereSQL} ORDER BY ${sortField} ${sortOrder} LIMIT ${limitNum} OFFSET ${offset}`;
+    const dataSQL = `SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ${whereSQL} ORDER BY ${sortField} ${sortOrder} LIMIT ? OFFSET ?`;
 
     const [countResult] = await db.execute(countSQL, params) as any;
     const totalItems = countResult[0].total;
     const totalPages = Math.ceil(totalItems / limitNum);
 
-    const [products] = await db.execute(dataSQL, params);
+    const [products] = await db.execute(dataSQL, [...params, limitNum, offset]);
 
     res.json({
       data: products,
@@ -677,17 +678,21 @@ async function startServer() {
 
   // Admin API (protected)
   app.get("/api/admin/stats", authenticateToken, requireAdmin, async (req, res) => {
-    const [orderRows] = await db.execute("SELECT COUNT(*) as count FROM orders") as any;
-    const [revenueRows] = await db.execute(
-      "SELECT COALESCE(SUM(total_amount), 0) as total FROM orders WHERE status != 'cancelled' AND (payment_status = 'paid' OR status = 'delivered')"
-    ) as any;
-    const [productRows] = await db.execute("SELECT COUNT(*) as count FROM products") as any;
+    try {
+      const [orderRows] = await db.execute("SELECT COUNT(*) as count FROM orders") as any;
+      const [revenueRows] = await db.execute(
+        "SELECT COALESCE(SUM(total_amount), 0) as total FROM orders WHERE status != 'cancelled' AND (payment_status = 'paid' OR status = 'delivered')"
+      ) as any;
+      const [productRows] = await db.execute("SELECT COUNT(*) as count FROM products") as any;
 
-    res.json({
-      totalOrders: orderRows[0].count,
-      totalRevenue: revenueRows[0].total || 0,
-      totalProducts: productRows[0].count,
-    });
+      res.json({
+        totalOrders: orderRows[0].count,
+        totalRevenue: revenueRows[0].total || 0,
+        totalProducts: productRows[0].count,
+      });
+    } catch (e) {
+      res.status(500).json({ error: 'Không lấy được thống kê' });
+    }
   });
 
   // Revenue timeseries for a date range (group by day)
@@ -740,7 +745,8 @@ async function startServer() {
          FROM order_items oi
          JOIN orders o ON oi.order_id = o.id AND o.status != 'cancelled'
          JOIN products p ON oi.product_id = p.id
-         GROUP BY p.id ORDER BY units_sold DESC LIMIT ${limit}`
+        GROUP BY p.id ORDER BY units_sold DESC LIMIT ?`,
+        [limit]
       ) as any;
       res.json(rows.map((r: any) => ({ id: r.id, name: r.name, image_url: r.image_url, units_sold: r.units_sold || 0, revenue: r.revenue || 0 })));
     } catch (e) { console.error('Top products error:', e); res.status(500).json({ error: 'Không lấy được top products' }); }
@@ -756,7 +762,8 @@ async function startServer() {
          JOIN orders o ON oi.order_id = o.id AND o.status != 'cancelled'
          JOIN products p ON oi.product_id = p.id
          JOIN categories c ON p.category_id = c.id
-         GROUP BY c.id ORDER BY revenue DESC LIMIT ${limit}`
+        GROUP BY c.id ORDER BY revenue DESC LIMIT ?`,
+        [limit]
       ) as any;
       res.json(rows.map((r: any) => ({ id: r.id, name: r.name, units_sold: r.units_sold || 0, revenue: r.revenue || 0 })));
     } catch (e) { console.error('Top categories error:', e); res.status(500).json({ error: 'Không lấy được top categories' }); }
@@ -1083,8 +1090,11 @@ async function startServer() {
         [name.trim(), slug.trim(), description || '', parseInt(price) || 0, parseInt(stock) || 0, image_url || '', category_id]
       ) as any;
       res.status(201).json({ id: result.insertId });
-    } catch (error) {
-      res.status(400).json({ error: "Thêm sản phẩm thất bại" });
+    } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        return res.status(400).json({ error: `Slug "${slug}" đã tồn tại. Hãy đặt tên sản phẩm khác.` });
+      }
+      res.status(500).json({ error: "Thêm sản phẩm thất bại: " + (error.message || '') });
     }
   });
 
@@ -1116,8 +1126,11 @@ async function startServer() {
         [name.trim(), slug.trim(), description || '', parseInt(price) || 0, parseInt(stock) || 0, image_url || '', category_id, req.params.id]
       );
       res.json({ message: "Cập nhật sản phẩm thành công" });
-    } catch (error) {
-      res.status(400).json({ error: "Cập nhật sản phẩm thất bại" });
+    } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        return res.status(400).json({ error: `Slug "${slug}" đã tồn tại. Hãy đặt tên sản phẩm khác.` });
+      }
+      res.status(500).json({ error: "Cập nhật sản phẩm thất bại: " + (error.message || '') });
     }
   });
 
@@ -1131,11 +1144,11 @@ async function startServer() {
   });
 
   app.delete("/api/admin/users/:id", authenticateToken, requireAdmin, async (req, res) => {
-    const [rows] = await db.execute("SELECT role FROM users WHERE id = ?", [req.params.id]) as any;
-    if (rows[0] && rows[0].role === "admin") {
-      return res.status(403).json({ error: "Không thể xóa tài khoản admin" });
-    }
     try {
+      const [rows] = await db.execute("SELECT role FROM users WHERE id = ?", [req.params.id]) as any;
+      if (rows[0] && rows[0].role === "admin") {
+        return res.status(403).json({ error: "Không thể xóa tài khoản admin" });
+      }
       // Set user_id = NULL cho đơn hàng liên quan trước khi xóa
       await db.execute("UPDATE orders SET user_id = NULL WHERE user_id = ?", [req.params.id]);
       await db.execute("DELETE FROM users WHERE id = ?", [req.params.id]);
@@ -1214,11 +1227,12 @@ async function startServer() {
         if (oldPath.startsWith(avatarsDir) && fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
       }
 
-      // Nén ảnh bằng Sharp
+      // Nén ảnh bằng Sharp (đọc vào buffer trước để tránh EBUSY trên Windows)
       const origPath = uploadRequest.file.path;
+      const origBuffer = fs.readFileSync(origPath);
       const optimizedName = `opt_${uploadRequest.file.filename.replace(path.extname(uploadRequest.file.filename), '.jpg')}`;
       const optimizedPath = path.join(UPLOAD_DIR, 'avatars', optimizedName);
-      await sharp(origPath)
+      await sharp(origBuffer)
         .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 80 })
         .toFile(optimizedPath);
@@ -1249,11 +1263,12 @@ async function startServer() {
     try {
       const uploadRequest = req as express.Request & { file?: Express.Multer.File };
       if (!uploadRequest.file) return res.status(400).json({ error: "Vui lòng chọn file ảnh" });
-      // Nén ảnh sản phẩm bằng Sharp
+      // Nén ảnh sản phẩm bằng Sharp (đọc vào buffer trước để tránh EBUSY trên Windows)
       const origPath = uploadRequest.file.path;
+      const origBuffer = fs.readFileSync(origPath);
       const optimizedName = `opt_${uploadRequest.file.filename.replace(path.extname(uploadRequest.file.filename), '.jpg')}`;
       const optimizedPath = path.join(UPLOAD_DIR, 'products', optimizedName);
-      await sharp(origPath)
+      await sharp(origBuffer)
         .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 85 })
         .toFile(optimizedPath);
@@ -1559,4 +1574,15 @@ async function startServer() {
   });
 }
 
-startServer();
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+});
+
+startServer().catch((err) => {
+  console.error('Server startup failed:', err);
+  process.exit(1);
+});

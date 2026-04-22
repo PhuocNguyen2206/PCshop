@@ -1507,7 +1507,7 @@ export const AdminDashboard = () => {
                         endpoint="/api/upload/product"
                         fieldName="image"
                         currentImage={editingProduct.image_url}
-                        onUploadSuccess={url => setEditingProduct({ ...editingProduct, image_url: url })}
+                        onUploadSuccess={url => setEditingProduct(prev => prev ? { ...prev, image_url: url } : prev)}
                       />
                     </div>
                     <div className="flex gap-2">

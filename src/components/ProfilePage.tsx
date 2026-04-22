@@ -1,11 +1,13 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Mail, Shield, Calendar, Phone, Check, Edit2, User as UserIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAuth } from '../AuthContext';
 import { ImageUpload } from './ImageUpload';
+import { useToast } from './Toast';
 
 export const ProfilePage = () => {
   const { user, updateAvatar, updatePhone, updateName, authHeaders } = useAuth();
+  const { toast } = useToast();
   const [phone, setPhone] = useState(user?.phone || '');
   const [editingPhone, setEditingPhone] = useState(false);
   const [name, setName] = useState(user?.name || '');
@@ -25,8 +27,11 @@ export const ProfilePage = () => {
       if (res.ok) {
         updatePhone(phone);
         setEditingPhone(false);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Lưu thất bại');
       }
-    } catch {} finally { setSaving(false); }
+    } catch { toast.error('Lỗi kết nối server'); } finally { setSaving(false); }
   };
 
   const handleSaveName = async () => {
@@ -41,8 +46,11 @@ export const ProfilePage = () => {
       if (res.ok) {
         updateName(name.trim());
         setEditingName(false);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Lưu thất bại');
       }
-    } catch {} finally { setSaving(false); }
+    } catch { toast.error('Lỗi kết nối server'); } finally { setSaving(false); }
   };
 
   return (

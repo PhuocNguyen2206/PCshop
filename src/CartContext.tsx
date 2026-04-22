@@ -49,7 +49,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ product_id: product.id, quantity: newQty }),
-      }).catch(console.error);
+        }).catch(err => console.error('Cart sync add failed:', err));
 
       if (existing) {
         return prev.map(item =>
@@ -65,7 +65,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetch(`/api/cart/${productId}`, {
       method: 'DELETE',
       headers: authHeaders(),
-    }).catch(console.error);
+      }).catch(err => console.error('Cart sync remove failed:', err));
   }, [authHeaders]);
 
   const updateQuantity = useCallback((productId: number, quantity: number) => {
@@ -80,7 +80,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ product_id: productId, quantity: finalQty }),
-      }).catch(console.error);
+        }).catch(err => console.error('Cart sync update failed:', err));
       return prev.map(i => i.id === productId ? { ...i, quantity: finalQty } : i);
     });
   }, [authHeaders, removeFromCart]);
@@ -90,7 +90,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetch('/api/cart', {
       method: 'DELETE',
       headers: authHeaders(),
-    }).catch(console.error);
+      }).catch(err => console.error('Cart sync clear failed:', err));
   }, [authHeaders]);
 
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);

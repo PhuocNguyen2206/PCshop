@@ -15,7 +15,7 @@ export const UserStore = ({ onProductClick, onAuthOpen, onViewProducts }: { onPr
     fetch('/api/products/best-sellers?limit=8')
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(setBestSellers)
-      .catch(() => setBestSellers([]));
+      .catch(err => { console.error('Failed to load best sellers:', err); setBestSellers([]); });
   }, []);
 
   const handleAddToCart = (e: React.MouseEvent, product: Product) => {
